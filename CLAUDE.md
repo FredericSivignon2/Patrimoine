@@ -1,0 +1,163 @@
+# CLAUDE.md — Directives & Architecture du Projet Patrimoine
+
+## 1. Vision et Architecture Globale
+Application web monopage (SPA) autonome, orientée mobile-first et desktop, pour le suivi patrimonial, la projection d'épargne et, surtout, **savoir ce qu'il est raisonnable de dépenser** (par poste : vacances, travaux, future voiture…), en tenant compte des prêts en cours.
+- **Principe produit — vision synthétique, pas un budget détaillé :** le site ne doit **pas** devenir un outil où l'on saisit chaque dépense courante (nourriture, factures…). Les mensualités de prêts viennent des échéanciers ; un retrait n'est rattaché à un poste que s'il compte (voyage, travaux, achat). Ne pas ajouter de catégories par dépense, de saisies récurrentes ni de rapprochement bancaire tant qu'aucune connexion à une API bancaire n'est décidée.
+- **Topologie :** Client statique (déployé sur GitHub Pages ou hébergeur statique HTTPS gratuit) + Base de données déportée sur Google Drive.
+- **Confidentialité :** Aucune donnée financière ne transite par un serveur applicatif. L'application s'exécute côté client et lit/écrit directement sur le Google Drive de l'utilisateur via l'API Google Drive v3.
+- **Multi-utilisateur / Partage :** Le fichier de données JSON est partageable via Google Drive (ex. : accès partagé pour le couple).
+- **Langue :** interface, messages d'erreur et échanges avec l'utilisateur en français.
+
+---
+
+## 2. État actuel (résumé)
+
+**Livré et testé** (`npm run test` : 515 tests, 16 fichiers) :
+- **Comptes et mouvements :** courants et épargne, versements/retraits, solde courant, épargne mensuelle constatée, projections à 1, 2, 3 et 5 ans (intérêts composés). Sur un compte courant on ne saisit que le solde du mois, pas chaque dépense.
+- **Prêts en cours** (page `/prets`) : immobilier, rénovation (dont éco-PTZ à 0 %), consommation, autre ; échéancier calculé, capital restant dû, mensualités (assurance comprise), intérêts restants, dates de fin, évolution à 1, 2, 3 et 5 ans, calcul d'une mensualité depuis une durée ; carte sur le tableau de bord.
+- **Remboursements anticipés** (partiels, prévus ou déjà faits ; dans le formulaire du prêt) : montant, date et effet (réduire la durée ou la mensualité) ; le formulaire compare avec et sans, la carte du prêt indique échéances et intérêts économisés.
+- **Retraits rattachés à un poste** (facultatif, retraits seulement) : la dépense consomme l'enveloppe de son poste ; filtre par poste ou « retraits sans poste » sur la page Mouvements.
+- **« Où passe l'argent »** (page `/postes`, par année) : retraits par poste, retraits sans poste, mensualités de prêts d'après les échéanciers.
+- **Fonds bloqués (épargne) :** tranches saisies (montant + date de déblocage) et option « chaque versement est bloqué N ans » (ex. PEE 5 ans) ; patrimoine *déblocable* vs *bloqué* ; calendrier des prochains déblocages.
+- **Épargne de sécurité :** seuil comparé au déblocable ; la bannière du tableau de bord passe du vert foncé au jaune, à l'orange puis au rouge.
+- **Postes de dépense :** chaque poste = un % du **dépensable** (déblocable − seuil de sécurité) ; page `/postes`, sélecteur d'échéance (aujourd'hui, 1, 2, 3, 5 ans), carte de synthèse sur le tableau de bord.
+- **Objectifs par poste :** montant visé + échéance ; atteint / il manque X / hors d'atteinte, pourcentage minimal nécessaire, alerte si les besoins cumulés dépassent 100 %.
+- **Simulateur « Et si je dépense… ? »** (tableau de bord) : effet d'une dépense (montant, délai, poste facultatif) sur le déblocable, la marge de sécurité et le budget du poste.
+- **Données de démonstration** (bouton sur un tableau de bord vide) : 4 comptes dont un PEE, 3 postes, 2 objectifs, 2 retraits rattachés, 5 prêts (3 immobiliers, un éco-PTZ à 0 % et un prêt conso, chacun avec un remboursement anticipé prévu), un seuil de sécurité.
+- **Stockage local** (`localStorage`) et **synchronisation Google Drive** avec détection de conflit (voir §6).
+
+**Non fait / à valider :**
+- Le code Google (GIS, Picker, API Drive) n'a **jamais été essayé avec de vrais identifiants** ; il n'est testé que contre un faux client (`src/test/FakeDriveClient.ts`).
+- Aucun déploiement configuré (pas de workflow GitHub Pages ; le dossier n'est pas un dépôt git).
+- Bundle JS ~578 Ko (~184 Ko gzip) : pas de découpage de code.
+- Les prêts ne modifient ni les soldes ni les projections d'épargne (ils sont un module à part) : un remboursement anticipé n'est **pas** déduit des comptes, il faut saisir le retrait correspondant (et il n'est pas compté dans les mensualités de « Où passe l'argent »). Aucune valeur de bien immobilier n'est suivie, donc pas de « patrimoine net des crédits » (il serait trompeur sans elle). Idée possible : taux variable.
+
+**Simplifications assumées :** les intérêts d'un compte sont comptés comme disponibles même sur des fonds bloqués ; les projections supposent qu'aucune dépense n'est prélevée et ignorent l'inflation ; l'épargne projetée repose sur la moyenne constatée ; les dépenses rattachées à un poste ne sont comptées que sur l'année civile en cours (l'enveloppe repart à zéro chaque 1er janvier) ; un virement entre comptes saisi comme retrait apparaît comme « retrait sans poste ».
+
+---
+
+## 3. Stack Technique
+- **Framework :** React 19 (Hooks, Context, aucun store lourd type Redux).
+- **Langage :** TypeScript 7 (`strict: true`, interdiction absolue du type `any` — vérifiée par `grep`, il n'y a pas de linter). TS 7 n'inclut plus les `@types/*` automatiquement : `tsconfig.json` déclare `"types": ["google.accounts", "google.picker"]`.
+- **Outillage :** Vite 8 (`base: './'`, plugins `@vitejs/plugin-react` et `@tailwindcss/vite`), config Vitest dans `vite.config.ts`.
+- **Routage :** React Router 7 en `HashRouter` (routes : `/`, `/postes`, `/prets`, `/comptes`, `/mouvements` ; barre mobile à cinq onglets, « Accueil » pour le tableau de bord).
+- **Visualisation graphique :** Chart.js 4 + `react-chartjs-2` (`maintainAspectRatio: false`, hauteur fixée par le conteneur).
+- **CSS / UI :** Tailwind CSS 4 (`@import 'tailwindcss'` dans `src/index.css`) ; classes toujours écrites en toutes lettres (pas de concaténation dynamique).
+- **Tests :** Vitest 5 + jsdom + React Testing Library + user-event + jest-dom.
+- **Google :** GIS et Picker chargés dynamiquement (`loadScript`), types `@types/google.accounts` / `@types/google.picker` + `gapi.d.ts` local.
+
+---
+
+## 4. Découpage Modulaire (Clean Architecture allégée)
+
+```text
+src/
+├── domain/                  # Logique métier pure (aucune dépendance React/navigateur)
+│   ├── models/              # Account, Movement, Budget, Loan, Safety, Projection, PatrimoineData, errors
+│   ├── repositories/        # IAccountRepository, IMovementRepository, IBudgetRepository, ILoanRepository, ISettingsRepository
+│   └── services/            # FinancialMath, Months, Validation, ids, DemoData
+│                            # ProjectionEngine, LockEngine, SafetyEngine, BudgetEngine, LoanEngine,
+│                            # SpendingSimulator, SpendingReport
+├── infrastructure/
+│   ├── gdrive/              # GDriveClient (GIS + Drive v3 + Picker), DriveSyncService, IDriveClient, errors, loadScript
+│   ├── storage/             # PatrimoineStore, IStorageDriver, LocalStorageDriver, MockStorageDriver,
+│   │                        # DriveStorageDriver, parsePatrimoineData (validation des JSON lus)
+│   └── repositories/        # Account/Movement/Budget/Loan/SettingsRepository (sur PatrimoineStore)
+├── context/                 # AuthContext (session Google), FinancialContext (composition racine)
+├── hooks/                   # useAccounts, useMovements, useProjections, useBudgets, useLoans, useSafety, useDriveSync
+├── components/
+│   ├── common/              # Button, Card, Modal, EmptyState, PageHeader, fields, format, icons, palette
+│   ├── layout/              # AppLayout (nav haute desktop / basse mobile), SyncStatusChip, SyncDialog
+│   ├── charts/              # ProjectionChart, AllocationChart, MonthlySavingsChart, LoansChart, chartSetup
+│   ├── accounts/, movements/, budgets/, loans/, dashboard/   # formulaires et cartes par domaine
+└── pages/                   # DashboardPage, BudgetsPage (/postes), LoansPage (/prets), AccountsPage, MovementsPage
+```
+Les tests sont à côté du code (`*.test.ts(x)`) ; `src/test/` contient `setup.ts` et `FakeDriveClient.ts`. `App.test.tsx` est le test d'intégration de l'application.
+
+---
+
+## 5. Règles Métier & Modèle de Données
+
+### 5.1 Fichier de données (`patrimoine_data.json` et cache local)
+`PatrimoineData = { version, accounts[], movements[], budgets[], loans[], safety? }`, `DATA_VERSION = 6`.
+- **Politique de version :** tout nouveau champ qu'un ancien client ne saurait pas conserver **incrémente `DATA_VERSION`**. Les versions précédentes restent lisibles (champs absents = valeurs par défaut) ; un client plus ancien **refuse** un fichier plus récent au lieu d'en effacer silencieusement les champs. Historique : v2 fonds bloqués + épargne de sécurité, v3 postes, v4 objectifs, v5 prêts + rattachement d'un retrait à un poste, v6 remboursements anticipés d'un prêt.
+- Toute lecture (Drive, `localStorage`) passe par `parsePatrimoineData` (validation stricte, types `unknown`). Un cache local illisible est copié sous `patrimoine_data.corrompu.<horodatage>` avant d'être écrasé.
+- Les fixtures de test utilisent la constante `DATA_VERSION`, jamais un littéral.
+
+### 5.2 Entités
+* **`Account` :** `id` (UUID), `name`, `type` (`'CHECKING'` | `'SAVINGS'`), `initialBalance` (centimes), `interestRate?` (% annuel, épargne), `lockedTranches?` (`{ amount, unlockDate }[]`, épargne, triées par date), `depositLockYears?` (1 à 50, épargne). Taux et blocages sont supprimés d'un compte courant.
+* **`Movement` :** `id`, `accountId`, `type` (`'DEPOSIT'` | `'WITHDRAWAL'`), `amount` (centimes > 0), `date` (`YYYY-MM-DD`), `note?`, `budgetId?` (poste de dépense, **retraits uniquement**).
+* **`Budget` (poste) :** `id`, `name`, `percent` (0 à 100, 2 décimales max), `targetAmount?` (centimes) et `targetDate?` (`YYYY-MM-DD`), toujours ensemble.
+* **`Loan` (prêt) :** `id`, `name`, `kind` (`'MORTGAGE'` | `'RENOVATION'` | `'CONSUMER'` | `'OTHER'`), `principal` (capital restant dû juste avant `firstPaymentDate`, centimes > 0), `annualRate` (% nominal, 0 pour un prêt à taux zéro), `monthlyPayment` (hors assurance, centimes), `monthlyInsurance?`, `firstPaymentDate` (`YYYY-MM-DD` ; les échéances déjà passées sont considérées payées, une date future représente un différé). Pour un prêt entamé, saisir le capital du dernier relevé et la prochaine échéance. `prepayments?` : `{ date, amount, effect }[]` triés par date, `effect` = `'DURATION'` (réduire la durée) | `'PAYMENT'` (réduire la mensualité) ; à ne saisir que s'ils ne sont pas déjà déduits du capital restant dû.
+* **`SafetySettings` :** `threshold` (centimes), `comfortMargin` (centimes, 5 000 € par défaut). Absent tant qu'aucun seuil n'est défini.
+
+### 5.3 Conventions numériques
+- Montants **en centimes entiers** partout (stockage, calculs, validation). Saisie via `parseAmountToCents` (jamais de multiplication de flottants) ; la division par 100 n'existe que pour l'affichage (`components/common/format.ts`).
+- Pourcentages convertis en **points de base** entiers (`percentToBasisPoints`, 1 % = 100). Une part de montant est **arrondie au centime inférieur** (`shareOf`) : la somme des parts ne dépasse jamais le total, le reliquat va au « non affecté ». Un pourcentage nécessaire est arrondi au point de base **supérieur**.
+- Dates ISO `YYYY-MM-DD` et mois `YYYY-MM`, sans conversion de fuseau (`Months.ts`).
+
+### 5.4 Moteurs (`domain/services`), tous couverts par des tests unitaires
+* **`ProjectionEngine` :**
+  - Solde courant = solde initial + versements − retraits.
+  - Épargne mensuelle constatée = moyenne des versements nets des 12 derniers mois **complets** (mois en cours exclu, sans remonter avant le premier mouvement, mois vides = 0 ; à défaut de mois complet, le mois en cours).
+  - Projection de 61 points (0 = aujourd'hui, jusqu'à 60 mois), horizons 12/24/36/60 : intérêts composés chaque mois (taux/12 sur le solde d'ouverture, arrondis au centime, aucun sur un solde ≤ 0), versement net moyen ajouté en fin de mois. Chaque point porte `balance`, `locked` et `available`.
+* **`LockEngine` :** lots bloqués = tranches saisies + un lot par versement si `depositLockYears` ; bloqué = somme des lots non débloqués à la date, plafonnée au solde ; les versements futurs projetés d'un compte à versements bloqués sont eux aussi bloqués. Le point 0 est évalué à la date du jour, les suivants en fin de mois.
+* **`SafetyEngine` :** marge = déblocable − seuil. Vert si marge > marge de confort ; jaune si ≤ marge de confort ; orange si ≤ 1 000 € (bande plafonnée à la marge de confort, seuil compris) ; rouge si marge < 0.
+* **`BudgetEngine` :** dépensable = `max(0, déblocable − seuil)` (sans seuil défini : tout le déblocable). Parts statiques : somme des % ≤ 100 (imposée par le dépôt, tolérée mais signalée à la lecture). Répartition aujourd'hui et à 1, 2, 3, 5 ans d'après la projection.
+  - **Enveloppes :** base de répartition (`pool`) = dépensable + dépenses de l'année civile déjà rattachées aux postes ; enveloppe d'un poste = son % de la base ; `remaining` = enveloppe − dépensé (négatif si dépassé). Une dépense sur un poste ne consomme donc que **son** enveloppe (les autres ne bougent pas) ; restes + non affecté = dépensable réel. Les retraits sans poste réduisent le dépensable et donc toutes les enveloppes proportionnellement.
+  - **Objectif :** évalué à la **fin du mois d'échéance** (borné à la plage projetée, indicateurs `overdue` / `beyondHorizon`) sur le reste disponible du poste ; pourcentage minimal nécessaire ; la somme des pourcentages nécessaires (chacun à son échéance) > 100 % signale des objectifs incompatibles.
+* **`LoanEngine` :** échéancier à mensualités constantes (jour du mois conservé, ramené en fin de mois si besoin) ; intérêts du mois = capital restant dû × taux / 12 (`monthlyInterest`, entiers) ; la dernière échéance solde le prêt. **Remboursement anticipé :** imputé à la première échéance dont la date est ≥ la sienne, *après* le paiement de cette échéance (les intérêts de la période portent sur l'ancien capital), plafonné au capital restant dû ; `DURATION` garde la mensualité (le prêt finit plus tôt), `PAYMENT` recalcule la mensualité (`paymentForTerm`) pour conserver le nombre d'échéances restantes ; un remboursement postérieur à la fin du prêt est sans effet et signalé (`ignoredPrepayments`). `measurePrepayments` chiffre l'écart avec le même prêt sans remboursement (intérêts et échéances économisés, mensualité réduite). Échéancier **incomplet** si la mensualité ne couvre pas les intérêts ou si la durée dépasse 50 ans : refusé à l'écriture (`validateLoan`) et à la lecture (`parseLoan`). Situation à une date (`loanSnapshot`), projection mois par mois du capital restant dû et des mensualités (`projectLoans`, assurance comprise), fins de prêt à venir, `paymentForTerm` (plus petite mensualité qui rembourse en N échéances, par dichotomie sur le même échéancier). Les mensualités ne sont **jamais** des mouvements.
+* **`SpendingReport` :** dépenses par poste et retraits sans poste pour une année civile, plus les mensualités de prêts de l'année d'après les échéanciers ; `spentByBudget` alimente les enveloppes.
+* **`SpendingSimulator` :** verdict `unsafe` (déblocable après dépense < seuil, ou < 0 sans seuil) > `over-budget` (dépasse ce qu'il reste au poste choisi) > `tight` (bannière jaune/orange après) > `reasonable`.
+
+### 5.5 Dépôts et validation
+Les repositories valident (`Validation.ts`) et modifient le `PatrimoineStore` de façon synchrone (aucun état changé si une erreur est levée), puis persistent en local. La suppression d'un compte supprime ses mouvements ; la suppression d'un poste **détache** ses retraits (ils restent, sans poste) ; les postes et les prêts ne dépendent d'aucun compte. Un rattachement à un poste n'est valide que sur un retrait et vers un poste existant.
+
+---
+
+## 6. Synchronisation et Données sur Google Drive
+
+1. **Fichier cible :** `patrimoine_data.json`.
+2. **Authentification :** Google Identity Services (`google.accounts.oauth2.initTokenClient`), scope minimal `https://www.googleapis.com/auth/drive.file`. Jeton conservé **en mémoire seulement** ; à expiration ou 401 (`AuthExpiredError`) l'état passe à « reconnexion nécessaire ». Le script GIS est préchargé pour que la fenêtre de connexion s'ouvre depuis un geste utilisateur.
+3. **Fichier partagé :** recherche de `patrimoine_data.json`, création (à partir des données locales, ou vierge si rien n'est saisi) ou choix d'un fichier via le **Picker** (nécessite `VITE_GOOGLE_API_KEY` ; `setAppId` = préfixe numérique du client ID, requis avec `drive.file`).
+4. **Local d'abord :** l'UI lit et écrit toujours dans `PatrimoineStore` (+ `LocalStorageDriver`). `DriveSyncService` pousse les modifications vers Drive après ~1,5 s ; le lien au fichier (`patrimoine_drive_binding` : `fileId`, somme de contrôle, modifications en attente) survit au rechargement.
+5. **Conflits :** somme de contrôle MD5 lue **avant** le contenu (une modification concurrente provoque un faux conflit, jamais une perte). `DriveStorageDriver.save` refuse d'écraser un fichier modifié ailleurs (`ConflictError`) ; l'utilisateur choisit alors la version Drive ou la sienne. Jamais d'écrasement silencieux.
+6. **États de synchronisation :** `unavailable` (pas d'identifiant client) · `unbound` · `auth-required` · `idle` · `syncing` · `conflict` · `error`.
+7. **Mode local :** sans `VITE_GOOGLE_CLIENT_ID`, l'application fonctionne entièrement en local (`LocalStorageDriver` ; `MockStorageDriver` pour les tests).
+
+---
+
+## 7. Variables d'Environnement
+Copier `.env.example` en `.env.local` (ignoré par git) avec les identifiants de l'application Google Cloud :
+```text
+VITE_GOOGLE_CLIENT_ID=votre_client_id.apps.googleusercontent.com
+VITE_GOOGLE_API_KEY=votre_api_key
+```
+Les deux sont facultatives : sans elles, mode local uniquement (l'API key ne sert qu'au Picker).
+
+---
+
+## 8. Règles d'Exécution pour Claude Code
+
+* **Indépendance de la couche données :** l'UI ne sait jamais si la donnée vient du Drive ou du `localStorage`. Tout passe par les repositories (lecture via `FinancialContext`, écriture via les hooks).
+* **Arithmétique financière :** entiers (centimes, points de base), jamais de flottants pour un montant ; voir §5.3.
+* **Mobile First :** cibles tactiles ≥ 44 px, modales en feuille basse sur mobile, graphiques à hauteur fixe. Toujours `grid-cols-1` (pas de colonne implicite `auto`) autour de contenus larges comme un canvas : sinon la grille déborde de l'écran. Contrôler à 375 px de large.
+* **Français partout** dans l'UI ; pas de `any`, pas de `@ts-ignore`.
+* **Rester synthétique :** avant d'ajouter une saisie, se demander si elle oblige à entrer des dépenses courantes ; si oui, calculer plutôt que saisir (ex. mensualités d'après l'échéancier).
+* **Tout changement de règle métier** commence par le domaine + ses tests, puis parse/repository, contexte/hooks, UI, tests d'interface, et enfin **vérification dans le navigateur** (mobile 375 px et desktop, console sans erreur après un rechargement propre).
+* **Format de fichier :** appliquer la politique de version du §5.1 ; ajouter les cas de parsing (accepté, migré, rejeté).
+* **Tests :**
+  - Les graphiques sont mockés dans les tests d'interface (`vi.mock('react-chartjs-2', …)`) : jsdom n'a pas de `<canvas>`.
+  - `Intl` produit des espaces insécables : comparer les montants avec les helpers de `App.test.tsx` (`euros`, `exactEuros`), et ancrer les montants (« 0,00 € » se retrouve dans « 10 000,00 € »).
+  - Piège : un paramètre par défaut se déclenche aussi quand on passe `undefined` ; pour un jeu de test « sans seuil », utiliser `null` comme sentinelle.
+  - Les modales sont des `div role="dialog"` (pas `<dialog>`, que jsdom ne gère pas).
+* **Rechargement à chaud (Vite) :** des erreurs « ordre des hooks » ou « useFinancial doit être utilisé… » juste après l'édition d'un contexte ou d'un hook sont des artefacts ; recharger la page avant de conclure à un bug.
+* **Aperçu :** `.claude/launch.json` déclare la configuration `dev` (port 5173).
+
+---
+
+## 9. Commandes Utiles
+- `npm run dev` : serveur Vite local (http://localhost:5173).
+- `npm run test` : tests Vitest (une passe) ; `npm run test:watch` en continu.
+- `npm run typecheck` : `tsc --noEmit`.
+- `npm run build` : typecheck puis build statique de production (`dist/`) ; `npm run preview` pour le servir.
