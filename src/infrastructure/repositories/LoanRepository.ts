@@ -14,7 +14,7 @@ export class LoanRepository implements ILoanRepository {
 
   create(input: NewLoan): Promise<Loan> {
     return this.store.mutate((data) => {
-      const loan: Loan = { id: newId(), ...validateLoan(input) };
+      const loan: Loan = { id: newId(), ...validateLoan(input, data.banks) };
       return { next: { ...data, loans: [...data.loans, loan] }, result: loan };
     });
   }
@@ -25,7 +25,7 @@ export class LoanRepository implements ILoanRepository {
       if (!existing) throw new NotFoundError(`Prêt introuvable : ${id}`);
       const { id: _id, ...current } = existing;
       // `monthlyInsurance: undefined` dans le patch retire l'assurance.
-      const updated: Loan = { id, ...validateLoan({ ...current, ...patch }) };
+      const updated: Loan = { id, ...validateLoan({ ...current, ...patch }, data.banks) };
       return {
         next: { ...data, loans: data.loans.map((loan) => (loan.id === id ? updated : loan)) },
         result: updated,
@@ -33,10 +33,22 @@ export class LoanRepository implements ILoanRepository {
     });
   }
 
+  /** Supprime le prêt ; le bien immobilier qui lui était rattaché reste, sans prêt rattaché. */
   remove(id: string): Promise<void> {
     return this.store.mutate((data) => {
       if (!data.loans.some((loan) => loan.id === id)) throw new NotFoundError(`Prêt introuvable : ${id}`);
-      return { next: { ...data, loans: data.loans.filter((loan) => loan.id !== id) }, result: undefined };
+      return {
+        next: {
+          ...data,
+          loans: data.loans.filter((loan) => loan.id !== id),
+          properties: data.properties.map((property) => {
+            if (property.loanId !== id) return property;
+            const { loanId: _removed, ...withoutLoan } = property;
+            return withoutLoan;
+          }),
+        },
+        result: undefined,
+      };
     });
   }
 }

@@ -1,20 +1,26 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import type { Account } from '../domain/models/Account';
+import type { Bank } from '../domain/models/Bank';
 import type { Budget } from '../domain/models/Budget';
 import type { Loan } from '../domain/models/Loan';
 import type { Movement } from '../domain/models/Movement';
+import type { Property } from '../domain/models/Property';
 import type { SafetySettings } from '../domain/models/Safety';
 import type { IAccountRepository } from '../domain/repositories/IAccountRepository';
+import type { IBankRepository } from '../domain/repositories/IBankRepository';
 import type { IBudgetRepository } from '../domain/repositories/IBudgetRepository';
 import type { ILoanRepository } from '../domain/repositories/ILoanRepository';
 import type { IMovementRepository } from '../domain/repositories/IMovementRepository';
+import type { IPropertyRepository } from '../domain/repositories/IPropertyRepository';
 import type { ISettingsRepository } from '../domain/repositories/ISettingsRepository';
 import { createDemoData } from '../domain/services/DemoData';
 import { DriveSyncService } from '../infrastructure/gdrive/DriveSyncService';
 import { AccountRepository } from '../infrastructure/repositories/AccountRepository';
+import { BankRepository } from '../infrastructure/repositories/BankRepository';
 import { BudgetRepository } from '../infrastructure/repositories/BudgetRepository';
 import { LoanRepository } from '../infrastructure/repositories/LoanRepository';
 import { MovementRepository } from '../infrastructure/repositories/MovementRepository';
+import { PropertyRepository } from '../infrastructure/repositories/PropertyRepository';
 import { SettingsRepository } from '../infrastructure/repositories/SettingsRepository';
 import type { IStorageDriver } from '../infrastructure/storage/IStorageDriver';
 import { LocalStorageDriver } from '../infrastructure/storage/LocalStorageDriver';
@@ -26,6 +32,8 @@ interface DataSnapshot {
   movements: Movement[];
   budgets: Budget[];
   loans: Loan[];
+  banks: Bank[];
+  properties: Property[];
   /** Absent tant qu'aucun seuil d'épargne de sécurité n'est défini. */
   safety: SafetySettings | undefined;
 }
@@ -37,6 +45,8 @@ interface FinancialContextValue extends DataSnapshot {
   movementRepository: IMovementRepository;
   budgetRepository: IBudgetRepository;
   loanRepository: ILoanRepository;
+  bankRepository: IBankRepository;
+  propertyRepository: IPropertyRepository;
   settingsRepository: ISettingsRepository;
   sync: DriveSyncService;
   loadDemoData: () => Promise<void>;
@@ -44,7 +54,15 @@ interface FinancialContextValue extends DataSnapshot {
 
 const FinancialContext = createContext<FinancialContextValue | null>(null);
 
-const EMPTY_SNAPSHOT: DataSnapshot = { accounts: [], movements: [], budgets: [], loans: [], safety: undefined };
+const EMPTY_SNAPSHOT: DataSnapshot = {
+  accounts: [],
+  movements: [],
+  budgets: [],
+  loans: [],
+  banks: [],
+  properties: [],
+  safety: undefined,
+};
 
 interface FinancialProviderProps {
   /** Cache local ; par défaut le `localStorage` du navigateur. */
@@ -63,12 +81,23 @@ export function FinancialProvider({ storage, children }: FinancialProviderProps)
       movementRepository: new MovementRepository(store),
       budgetRepository: new BudgetRepository(store),
       loanRepository: new LoanRepository(store),
+      bankRepository: new BankRepository(store),
+      propertyRepository: new PropertyRepository(store),
       settingsRepository: new SettingsRepository(store),
       sync: new DriveSyncService(store, session),
     };
   });
-  const { store, accountRepository, movementRepository, budgetRepository, loanRepository, settingsRepository, sync } =
-    services;
+  const {
+    store,
+    accountRepository,
+    movementRepository,
+    budgetRepository,
+    loanRepository,
+    bankRepository,
+    propertyRepository,
+    settingsRepository,
+    sync,
+  } = services;
 
   const [status, setStatus] = useState<FinancialContextValue['status']>('loading');
   const [error, setError] = useState<string | null>(null);
@@ -77,14 +106,16 @@ export function FinancialProvider({ storage, children }: FinancialProviderProps)
   useEffect(() => {
     let active = true;
     const refresh = async (): Promise<void> => {
-      const [accounts, movements, budgets, loans, safety] = await Promise.all([
+      const [accounts, movements, budgets, loans, banks, properties, safety] = await Promise.all([
         accountRepository.list(),
         movementRepository.list(),
         budgetRepository.list(),
         loanRepository.list(),
+        bankRepository.list(),
+        propertyRepository.list(),
         settingsRepository.getSafety(),
       ]);
-      if (active) setData({ accounts, movements, budgets, loans, safety });
+      if (active) setData({ accounts, movements, budgets, loans, banks, properties, safety });
     };
 
     const unsubscribe = store.subscribe(() => void refresh());
@@ -106,7 +137,17 @@ export function FinancialProvider({ storage, children }: FinancialProviderProps)
       unsubscribe();
       sync.dispose();
     };
-  }, [store, accountRepository, movementRepository, budgetRepository, loanRepository, settingsRepository, sync]);
+  }, [
+    store,
+    accountRepository,
+    movementRepository,
+    budgetRepository,
+    loanRepository,
+    bankRepository,
+    propertyRepository,
+    settingsRepository,
+    sync,
+  ]);
 
   useEffect(() => {
     if (!isSignedIn) sync.markSignedOut();
@@ -123,6 +164,8 @@ export function FinancialProvider({ storage, children }: FinancialProviderProps)
       movementRepository,
       budgetRepository,
       loanRepository,
+      bankRepository,
+      propertyRepository,
       settingsRepository,
       sync,
       loadDemoData,
@@ -135,6 +178,8 @@ export function FinancialProvider({ storage, children }: FinancialProviderProps)
       movementRepository,
       budgetRepository,
       loanRepository,
+      bankRepository,
+      propertyRepository,
       settingsRepository,
       sync,
       loadDemoData,

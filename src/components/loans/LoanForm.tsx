@@ -11,9 +11,11 @@ import {
   type NewLoan,
   type PrepaymentEffect,
 } from '../../domain/models/Loan';
+import type { Bank } from '../../domain/models/Bank';
 import { centsToInputString, parseAmountToCents, parsePercent, sumCents } from '../../domain/services/FinancialMath';
 import { buildAmortization, measurePrepayments, paymentForTerm, type Amortization } from '../../domain/services/LoanEngine';
 import { addMonthsToDate, isValidIsoDate, monthKeyOfIso, toIsoDate } from '../../domain/services/Months';
+import { BankSelect } from '../banks/BankSelect';
 import { Button } from '../common/Button';
 import { errorMessage } from '../common/errorMessage';
 import { DeleteButton, Field, FormError, SuffixInput, inputClass } from '../common/fields';
@@ -57,14 +59,16 @@ const totalInterest = (schedule: Amortization): number => sumCents(schedule.rows
 
 interface LoanFormProps {
   loan?: Loan;
+  banks: readonly Bank[];
   onSubmit: (input: NewLoan) => Promise<unknown>;
   onDelete?: () => Promise<unknown>;
   onCancel: () => void;
 }
 
-export function LoanForm({ loan, onSubmit, onDelete, onCancel }: LoanFormProps) {
+export function LoanForm({ loan, banks, onSubmit, onDelete, onCancel }: LoanFormProps) {
   const [name, setName] = useState(loan?.name ?? '');
   const [kind, setKind] = useState<LoanKind>(loan?.kind ?? 'MORTGAGE');
+  const [bankId, setBankId] = useState(loan?.bankId ?? '');
   const [principalText, setPrincipalText] = useState(loan ? centsToInputString(loan.principal) : '');
   const [firstPaymentDate, setFirstPaymentDate] = useState(
     loan?.firstPaymentDate ?? addMonthsToDate(toIsoDate(new Date()), 1),
@@ -157,6 +161,7 @@ export function LoanForm({ loan, onSubmit, onDelete, onCancel }: LoanFormProps) 
         monthlyInsurance: insurance > 0 ? insurance : undefined,
         firstPaymentDate,
         prepayments,
+        bankId: bankId || undefined,
       }),
     );
   };
@@ -189,6 +194,7 @@ export function LoanForm({ loan, onSubmit, onDelete, onCancel }: LoanFormProps) 
           ))}
         </select>
       </Field>
+      <BankSelect banks={banks} value={bankId} onChange={setBankId} label="Banque prêteuse (optionnel)" />
 
       <Field
         label="Capital restant dû"
@@ -237,7 +243,10 @@ export function LoanForm({ loan, onSubmit, onDelete, onCancel }: LoanFormProps) 
         </p>
       </div>
 
-      <Field label="Assurance mensuelle (optionnel)" hint="Assurance emprunteur payée avec chaque mensualité.">
+      <Field
+        label="Assurance mensuelle (optionnel)"
+        hint="Assurance emprunteur payée avec chaque mensualité, en plus de celle saisie ci-dessus. Laissez vide si elle est déjà incluse dans la mensualité."
+      >
         <SuffixInput suffix="€" value={insuranceText} onChange={(event) => setInsuranceText(event.target.value)} placeholder="28" />
       </Field>
 

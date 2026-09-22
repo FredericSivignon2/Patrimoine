@@ -42,6 +42,10 @@ const valid: PatrimoineData = {
       firstPaymentDate: '2027-01-15',
     },
   ],
+  banks: [{ id: 'bk1', name: 'La Banque Postale' }],
+  properties: [
+    { id: 'pr1', name: 'Appartement loué', estimatedValue: 22_000_000, loanId: 'l1', sellingFeePercent: 8 },
+  ],
 };
 
 describe('parsePatrimoineData', () => {
@@ -56,10 +60,12 @@ describe('parsePatrimoineData', () => {
       movements: [],
       budgets: [],
       loans: [],
+      banks: [],
+      properties: [],
     });
   });
 
-  it.each([1, 2, 3, 4, 5])('lit un fichier en version %i et le migre en version courante', (version) => {
+  it.each([1, 2, 3, 4, 5, 6])('lit un fichier en version %i et le migre en version courante', (version) => {
     const parsed = parsePatrimoineData({
       version,
       accounts: [{ id: 'a', name: 'Livret', type: 'SAVINGS', initialBalance: 100, interestRate: 2 }],
@@ -69,6 +75,8 @@ describe('parsePatrimoineData', () => {
     expect(parsed.accounts).toHaveLength(1);
     expect(parsed.budgets).toEqual([]);
     expect(parsed.loans).toEqual([]);
+    expect(parsed.banks).toEqual([]);
+    expect(parsed.properties).toEqual([]);
     expect(parsed.safety).toBeUndefined();
   });
 
@@ -91,9 +99,49 @@ describe('parsePatrimoineData', () => {
       movements: [],
       budgets: [],
       loans: [],
+      banks: [],
+      properties: [],
       safety: { threshold: 1_000_000, comfortMargin: 500_000 },
     };
     expect(parsePatrimoineJson(serializePatrimoineData(data))).toEqual(data);
+  });
+
+  it('relit une tranche « disponible à la retraite », sans date', () => {
+    const data: PatrimoineData = {
+      version: DATA_VERSION,
+      accounts: [
+        {
+          id: 'pee',
+          name: 'PEE',
+          type: 'SAVINGS',
+          initialBalance: 500_000,
+          lockedTranches: [{ amount: 300_000, unlockAtRetirement: true }],
+        },
+      ],
+      movements: [],
+      budgets: [],
+      loans: [],
+      banks: [],
+      properties: [],
+    };
+    expect(parsePatrimoineJson(serializePatrimoineData(data))).toEqual(data);
+  });
+
+  it('rejette une tranche à la fois datée et « à la retraite »', () => {
+    expect(() =>
+      parsePatrimoineData({
+        accounts: [
+          {
+            id: 'pee',
+            name: 'PEE',
+            type: 'SAVINGS',
+            initialBalance: 0,
+            lockedTranches: [{ amount: 300_000, unlockDate: '2028-01-01', unlockAtRetirement: true }],
+          },
+        ],
+        movements: [],
+      }),
+    ).toThrow(InvalidDataError);
   });
 
   it('ignore les champs inconnus', () => {
@@ -300,6 +348,73 @@ describe('parsePatrimoineData', () => {
         withLoan({ prepayments: [{ date: '2040-01-05', amount: 100_000, effect: 'DURATION' }] }),
       ).loans[0];
       expect(loan.prepayments).toHaveLength(1);
+    });
+
+    it('lit la banque rattachée à un prêt', () => {
+      expect(parsePatrimoineData(withLoan({ bankId: 'bk1' })).loans[0].bankId).toBe('bk1');
+      expect(parsePatrimoineData(withLoan({})).loans[0].bankId).toBeUndefined();
+    });
+
+    it('rejette une banque de prêt invalide', () => {
+      expect(() => parsePatrimoineData(withLoan({ bankId: '' }))).toThrow(InvalidDataError);
+      expect(() => parsePatrimoineData(withLoan({ bankId: 42 }))).toThrow(InvalidDataError);
+    });
+  });
+
+  describe('banques', () => {
+    it('lit une liste de banques', () => {
+      const parsed = parsePatrimoineData({
+        accounts: [],
+        movements: [],
+        banks: [
+          { id: 'bk1', name: 'La Banque Postale' },
+          { id: 'bk2', name: 'LCL' },
+        ],
+      });
+      expect(parsed.banks).toEqual([{ id: 'bk1', name: 'La Banque Postale' }, { id: 'bk2', name: 'LCL' }]);
+    });
+
+    it('lit la banque rattachée à un compte', () => {
+      const parsed = parsePatrimoineData({
+        accounts: [{ id: 'a', name: 'Livret', type: 'SAVINGS', initialBalance: 0, bankId: 'bk1' }],
+        movements: [],
+      });
+      expect(parsed.accounts[0].bankId).toBe('bk1');
+    });
+
+    it.each<[string, unknown]>([
+      ['une liste qui n’est pas un tableau', { accounts: [], movements: [], banks: 'bientôt' }],
+      ['une banque qui n’est pas un objet', { accounts: [], movements: [], banks: [42] }],
+      ['une banque sans identifiant', { accounts: [], movements: [], banks: [{ name: 'LCL' }] }],
+      ['une banque sans nom', { accounts: [], movements: [], banks: [{ id: 'bk1' }] }],
+      ['une banque de compte invalide', { accounts: [{ id: 'a', name: 'x', type: 'CHECKING', initialBalance: 0, bankId: '' }], movements: [] }],
+    ])('rejette %s', (_label, raw) => {
+      expect(() => parsePatrimoineData(raw)).toThrow(InvalidDataError);
+    });
+  });
+
+  describe('biens immobiliers', () => {
+    const withProperty = (override: Record<string, unknown>) => ({
+      accounts: [],
+      movements: [],
+      properties: [{ id: 'pr1', name: 'Appartement loué', estimatedValue: 22_000_000, sellingFeePercent: 8, ...override }],
+    });
+
+    it('lit un bien, avec ou sans prêt rattaché', () => {
+      expect(parsePatrimoineData(withProperty({})).properties[0].loanId).toBeUndefined();
+      expect(parsePatrimoineData(withProperty({ loanId: 'l1' })).properties[0].loanId).toBe('l1');
+    });
+
+    it.each<[string, Record<string, unknown>]>([
+      ['un bien sans identifiant', { id: undefined }],
+      ['un bien sans nom', { name: undefined }],
+      ['un bien à la valeur décimale', { estimatedValue: 100.5 }],
+      ['un bien à la valeur nulle', { estimatedValue: 0 }],
+      ['un bien aux frais de vente négatifs', { sellingFeePercent: -1 }],
+      ['un bien aux frais de vente supérieurs à 100 %', { sellingFeePercent: 120 }],
+      ['un bien au prêt rattaché vide', { loanId: '' }],
+    ])('rejette %s', (_label, override) => {
+      expect(() => parsePatrimoineData(withProperty(override))).toThrow(InvalidDataError);
     });
   });
 

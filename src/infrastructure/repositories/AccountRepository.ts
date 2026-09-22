@@ -18,7 +18,7 @@ export class AccountRepository implements IAccountRepository {
 
   create(input: NewAccount): Promise<Account> {
     return this.store.mutate((data) => {
-      const account: Account = { id: newId(), ...validateAccount(input) };
+      const account: Account = { id: newId(), ...validateAccount(input, data.banks) };
       return { next: { ...data, accounts: [...data.accounts, account] }, result: account };
     });
   }
@@ -28,7 +28,7 @@ export class AccountRepository implements IAccountRepository {
       const existing = data.accounts.find((account) => account.id === id);
       if (!existing) throw new NotFoundError(`Compte introuvable : ${id}`);
       const { id: _id, ...current } = existing;
-      const updated: Account = { id, ...validateAccount({ ...current, ...patch }) };
+      const updated: Account = { id, ...validateAccount({ ...current, ...patch }, data.banks) };
       return {
         next: { ...data, accounts: data.accounts.map((account) => (account.id === id ? updated : account)) },
         result: updated,

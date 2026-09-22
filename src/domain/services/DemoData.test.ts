@@ -5,6 +5,7 @@ import { createDemoData } from './DemoData';
 import { buildAmortization, finalRegularPayment, loanSnapshot, projectLoans } from './LoanEngine';
 import { evaluateSafety } from './SafetyEngine';
 import { computeLocked, projectPortfolio } from './ProjectionEngine';
+import { propertyCushion } from './PropertyEngine';
 import { spentByBudget } from './SpendingReport';
 
 const REFERENCE = new Date(2026, 8, 21);
@@ -16,10 +17,11 @@ describe('createDemoData', () => {
     expect(parsePatrimoineJson(serializePatrimoineData(demo))).toEqual(demo);
   });
 
-  it('montre un PEE aux fonds bloqués et une épargne de sécurité confortable', () => {
+  it('montre un PEE aux fonds bloqués (dont une tranche à la retraite) et une épargne de sécurité confortable', () => {
     const pee = demo.accounts.find((account) => account.name === 'PEE');
     expect(pee?.depositLockYears).toBe(5);
-    expect(pee?.lockedTranches).toHaveLength(3);
+    expect(pee?.lockedTranches).toHaveLength(4);
+    expect(pee?.lockedTranches?.filter((tranche) => tranche.unlockAtRetirement)).toHaveLength(1);
 
     const portfolio = projectPortfolio(demo.accounts, demo.movements, REFERENCE);
     expect(portfolio.currentLocked).toBeGreaterThan(0);
@@ -103,5 +105,28 @@ describe('createDemoData', () => {
     if (!pee || !livret) throw new Error('comptes de démonstration manquants');
     expect(computeLocked(pee, demo.movements, REFERENCE)).toBe(600_000 + 12 * 10_000);
     expect(computeLocked(livret, demo.movements, REFERENCE)).toBe(0);
+  });
+
+  it('rattache des banques aux comptes et à un prêt', () => {
+    expect(demo.banks.map((bank) => bank.name)).toEqual([
+      'La Banque Postale',
+      'La Caisse d’Épargne',
+      'AFER',
+      'Natixis',
+      'LCL',
+    ]);
+    expect(demo.accounts.every((account) => account.bankId !== undefined)).toBe(true);
+    expect(demo.loans.filter((loan) => loan.bankId).map((loan) => loan.name)).toEqual(['Prêt immobilier principal']);
+  });
+
+  it('montre un bien loué rattaché au prêt secondaire, avec un coussin positif', () => {
+    expect(demo.properties).toHaveLength(1);
+    const property = demo.properties[0];
+    const loan = demo.loans.find((candidate) => candidate.id === property.loanId);
+    expect(loan?.name).toBe('Prêt immobilier secondaire');
+
+    const cushion = propertyCushion(property, demo.loans, REFERENCE);
+    expect(cushion).toBeGreaterThan(0);
+    expect(cushion).toBeLessThan(property.estimatedValue);
   });
 });

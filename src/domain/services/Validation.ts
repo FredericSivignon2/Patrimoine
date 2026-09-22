@@ -5,16 +5,19 @@ import {
   type LockedTranche,
   type NewAccount,
 } from '../models/Account';
+import type { Bank, NewBank } from '../models/Bank';
 import type { Budget, NewBudget } from '../models/Budget';
 import { ValidationError } from '../models/errors';
 import {
   LOAN_KINDS,
   MAX_LOAN_MONTHS,
   PREPAYMENT_EFFECTS,
+  type Loan,
   type LoanPrepayment,
   type NewLoan,
 } from '../models/Loan';
 import type { MovementType, NewMovement } from '../models/Movement';
+import type { NewProperty, Property } from '../models/Property';
 import type { SafetySettings } from '../models/Safety';
 import { remainingBasisPoints } from './BudgetEngine';
 import { percentToBasisPoints } from './FinancialMath';
@@ -24,18 +27,31 @@ import { isValidIsoDate } from './Months';
 const ACCOUNT_TYPES: readonly AccountType[] = ['CHECKING', 'SAVINGS'];
 const MOVEMENT_TYPES: readonly MovementType[] = ['DEPOSIT', 'WITHDRAWAL'];
 
+/** `bankId` n'est valide que s'il désigne une banque existante ; absent, il est simplement omis. */
+function validateBankId(bankId: string | undefined, banks: readonly Bank[]): string | undefined {
+  if (bankId === undefined) return undefined;
+  if (!banks.some((bank) => bank.id === bankId)) throw new ValidationError('La banque sélectionnée est introuvable.');
+  return bankId;
+}
+
 function validateTranches(tranches: readonly LockedTranche[] | undefined): LockedTranche[] {
   return (tranches ?? [])
     .map((tranche) => {
       if (!Number.isSafeInteger(tranche.amount) || tranche.amount <= 0) {
         throw new ValidationError('Le montant d’une tranche bloquée doit être strictement positif.');
       }
-      if (!isValidIsoDate(tranche.unlockDate)) {
+      if (tranche.unlockAtRetirement) {
+        if (tranche.unlockDate !== undefined) {
+          throw new ValidationError('Une tranche est soit datée, soit disponible à la retraite, jamais les deux.');
+        }
+        return { amount: tranche.amount, unlockAtRetirement: true as const };
+      }
+      if (typeof tranche.unlockDate !== 'string' || !isValidIsoDate(tranche.unlockDate)) {
         throw new ValidationError('La date de déblocage d’une tranche est invalide.');
       }
       return { amount: tranche.amount, unlockDate: tranche.unlockDate };
     })
-    .sort((a, b) => a.unlockDate.localeCompare(b.unlockDate) || a.amount - b.amount);
+    .sort((a, b) => (a.unlockDate ?? '9999-99-99').localeCompare(b.unlockDate ?? '9999-99-99') || a.amount - b.amount);
 }
 
 function validateLockYears(years: number | undefined): number | undefined {
@@ -46,13 +62,15 @@ function validateLockYears(years: number | undefined): number | undefined {
   return years;
 }
 
-export function validateAccount(input: NewAccount): NewAccount {
+export function validateAccount(input: NewAccount, banks: readonly Bank[] = []): NewAccount {
   const name = input.name.trim();
   if (name === '') throw new ValidationError('Le nom du compte est obligatoire.');
   if (!ACCOUNT_TYPES.includes(input.type)) throw new ValidationError('Type de compte invalide.');
   if (!Number.isSafeInteger(input.initialBalance)) throw new ValidationError('Le solde initial est invalide.');
 
   const account: NewAccount = { name, type: input.type, initialBalance: input.initialBalance };
+  const bankId = validateBankId(input.bankId, banks);
+  if (bankId !== undefined) account.bankId = bankId;
   // Taux et fonds bloqués n'ont de sens que pour l'épargne.
   if (input.type === 'SAVINGS') {
     if (input.interestRate !== undefined) {
@@ -119,7 +137,7 @@ function validatePrepayments(prepayments: readonly LoanPrepayment[] | undefined)
     .sort((a, b) => a.date.localeCompare(b.date));
 }
 
-export function validateLoan(input: NewLoan): NewLoan {
+export function validateLoan(input: NewLoan, banks: readonly Bank[] = []): NewLoan {
   const name = input.name.trim();
   if (name === '') throw new ValidationError('Le nom du prêt est obligatoire.');
   if (!LOAN_KINDS.includes(input.kind)) throw new ValidationError('Type de prêt invalide.');
@@ -148,6 +166,8 @@ export function validateLoan(input: NewLoan): NewLoan {
   if (input.monthlyInsurance) loan.monthlyInsurance = input.monthlyInsurance;
   const prepayments = validatePrepayments(input.prepayments);
   if (prepayments.length > 0) loan.prepayments = prepayments;
+  const bankId = validateBankId(input.bankId, banks);
+  if (bankId !== undefined) loan.bankId = bankId;
 
   const { rows, complete } = buildAmortization(loan);
   if (!complete) {
@@ -190,6 +210,42 @@ export function validateBudget(input: NewBudget, others: readonly Budget[]): New
     budget.targetDate = input.targetDate;
   }
   return budget;
+}
+
+/** `others` : les autres banques, pour refuser un doublon (comparaison insensible à la casse). */
+export function validateBank(input: NewBank, others: readonly Bank[]): NewBank {
+  const name = input.name.trim();
+  if (name === '') throw new ValidationError('Le nom de la banque est obligatoire.');
+  if (others.some((bank) => bank.name.localeCompare(name, 'fr', { sensitivity: 'base' }) === 0)) {
+    throw new ValidationError('Cette banque existe déjà.');
+  }
+  return { name };
+}
+
+/** `loans` : les prêts existants, pour valider `loanId`. `others` : les autres biens, un prêt n'en finance qu'un seul. */
+export function validateProperty(input: NewProperty, loans: readonly Loan[], others: readonly Property[]): NewProperty {
+  const name = input.name.trim();
+  if (name === '') throw new ValidationError('Le nom du bien est obligatoire.');
+  if (!Number.isSafeInteger(input.estimatedValue) || input.estimatedValue <= 0) {
+    throw new ValidationError('La valeur estimée doit être strictement positive.');
+  }
+  if (!Number.isFinite(input.sellingFeePercent) || input.sellingFeePercent < 0 || input.sellingFeePercent > 100) {
+    throw new ValidationError('Les frais de vente doivent être compris entre 0 et 100 %.');
+  }
+
+  const property: NewProperty = {
+    name,
+    estimatedValue: input.estimatedValue,
+    sellingFeePercent: percentToBasisPoints(input.sellingFeePercent) / 100,
+  };
+  if (input.loanId !== undefined) {
+    if (!loans.some((loan) => loan.id === input.loanId)) throw new ValidationError('Le prêt sélectionné est introuvable.');
+    if (others.some((other) => other.loanId === input.loanId)) {
+      throw new ValidationError('Ce prêt est déjà rattaché à un autre bien.');
+    }
+    property.loanId = input.loanId;
+  }
+  return property;
 }
 
 export function validateSafety(input: SafetySettings): SafetySettings {

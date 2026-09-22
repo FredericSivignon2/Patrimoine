@@ -3,10 +3,13 @@ import { NotFoundError, ValidationError } from '../../domain/models/errors';
 import { MockStorageDriver } from '../storage/MockStorageDriver';
 import { PatrimoineStore } from '../storage/PatrimoineStore';
 import type { NewLoan } from '../../domain/models/Loan';
+import type { NewProperty } from '../../domain/models/Property';
 import { AccountRepository } from './AccountRepository';
+import { BankRepository } from './BankRepository';
 import { BudgetRepository } from './BudgetRepository';
 import { LoanRepository } from './LoanRepository';
 import { MovementRepository } from './MovementRepository';
+import { PropertyRepository } from './PropertyRepository';
 import { SettingsRepository } from './SettingsRepository';
 
 let driver: MockStorageDriver;
@@ -16,6 +19,8 @@ let movements: MovementRepository;
 let settings: SettingsRepository;
 let budgets: BudgetRepository;
 let loans: LoanRepository;
+let banks: BankRepository;
+let properties: PropertyRepository;
 
 beforeEach(async () => {
   driver = new MockStorageDriver();
@@ -26,6 +31,8 @@ beforeEach(async () => {
   settings = new SettingsRepository(store);
   budgets = new BudgetRepository(store);
   loans = new LoanRepository(store);
+  banks = new BankRepository(store);
+  properties = new PropertyRepository(store);
 });
 
 describe('AccountRepository', () => {
@@ -80,6 +87,16 @@ describe('AccountRepository', () => {
     expect(await accounts.list()).toEqual([b]);
     expect(await movements.list()).toEqual([kept]);
     expect(driver.stored?.movements).toEqual([kept]);
+  });
+
+  it('rattache un compte à une banque existante, et refuse une banque inconnue', async () => {
+    const bank = await banks.create({ name: 'LCL' });
+    const account = await accounts.create({ name: 'Livret', type: 'SAVINGS', initialBalance: 0, bankId: bank.id });
+    expect(account.bankId).toBe(bank.id);
+
+    await expect(
+      accounts.create({ name: 'x', type: 'CHECKING', initialBalance: 0, bankId: 'inconnue' }),
+    ).rejects.toBeInstanceOf(ValidationError);
   });
 });
 
@@ -472,6 +489,30 @@ describe('LoanRepository', () => {
     await expect(loans.update('inconnu', { name: 'x' })).rejects.toBeInstanceOf(NotFoundError);
   });
 
+  it('détache le bien immobilier rattaché quand son prêt est supprimé', async () => {
+    const loan = await loans.create(input);
+    const property = await properties.create({
+      name: 'Appartement loué',
+      estimatedValue: 20_000_000,
+      sellingFeePercent: 8,
+      loanId: loan.id,
+    });
+
+    await loans.remove(loan.id);
+
+    const remaining = (await properties.list())[0];
+    expect(remaining).toMatchObject({ id: property.id, name: 'Appartement loué' });
+    expect(remaining).not.toHaveProperty('loanId');
+  });
+
+  it('rattache un prêt à une banque existante, et refuse une banque inconnue', async () => {
+    const bank = await banks.create({ name: 'LCL' });
+    const loan = await loans.create({ ...input, bankId: bank.id });
+    expect(loan.bankId).toBe(bank.id);
+
+    await expect(loans.create({ ...input, bankId: 'inconnue' })).rejects.toBeInstanceOf(ValidationError);
+  });
+
   describe('remboursements anticipés', () => {
     const conso: NewLoan = {
       name: 'Prêt conso',
@@ -535,6 +576,130 @@ describe('LoanRepository', () => {
       });
       expect(loan.prepayments).toHaveLength(1);
     });
+  });
+});
+
+describe('BankRepository', () => {
+  it('crée une banque et la persiste', async () => {
+    const bank = await banks.create({ name: '  LCL ' });
+    expect(bank).toMatchObject({ name: 'LCL' });
+    expect(bank.id).toBeTruthy();
+    expect(await banks.list()).toEqual([bank]);
+    expect(driver.stored?.banks).toEqual([bank]);
+  });
+
+  it('refuse un nom vide ou déjà utilisé (insensible à la casse)', async () => {
+    await expect(banks.create({ name: '  ' })).rejects.toBeInstanceOf(ValidationError);
+    await banks.create({ name: 'LCL' });
+    await expect(banks.create({ name: 'lcl' })).rejects.toBeInstanceOf(ValidationError);
+    expect(await banks.list()).toHaveLength(1);
+  });
+
+  it('renomme une banque, et signale une banque inexistante', async () => {
+    const bank = await banks.create({ name: 'LCL' });
+    const renamed = await banks.rename(bank.id, 'LCL Banque');
+    expect(renamed).toEqual({ id: bank.id, name: 'LCL Banque' });
+    await expect(banks.rename('inconnue', 'x')).rejects.toBeInstanceOf(NotFoundError);
+  });
+
+  it('détache les comptes et prêts rattachés quand la banque est supprimée', async () => {
+    const bank = await banks.create({ name: 'LCL' });
+    const account = await accounts.create({ name: 'Livret', type: 'SAVINGS', initialBalance: 0, bankId: bank.id });
+    const loan = await loans.create({
+      name: 'Prêt',
+      kind: 'CONSUMER',
+      principal: 100_000,
+      annualRate: 0,
+      monthlyPayment: 10_000,
+      firstPaymentDate: '2026-10-05',
+      bankId: bank.id,
+    });
+
+    await banks.remove(bank.id);
+
+    expect(await banks.list()).toEqual([]);
+    expect((await accounts.getById(account.id))?.bankId).toBeUndefined();
+    expect((await loans.list()).find((candidate) => candidate.id === loan.id)?.bankId).toBeUndefined();
+    await expect(banks.remove(bank.id)).rejects.toBeInstanceOf(NotFoundError);
+  });
+});
+
+describe('PropertyRepository', () => {
+  const input: NewProperty = { name: 'Appartement loué', estimatedValue: 20_000_000, sellingFeePercent: 8 };
+
+  it('crée un bien avec un id et le persiste', async () => {
+    const property = await properties.create(input);
+    expect(property).toMatchObject(input);
+    expect(property.id).toBeTruthy();
+    expect(await properties.list()).toEqual([property]);
+    expect(driver.stored?.properties).toEqual([property]);
+  });
+
+  it('rattache un bien à un prêt existant, et refuse un prêt inconnu', async () => {
+    const loan = await loans.create({
+      name: 'Prêt',
+      kind: 'MORTGAGE',
+      principal: 100_000,
+      annualRate: 0,
+      monthlyPayment: 10_000,
+      firstPaymentDate: '2026-10-05',
+    });
+    const property = await properties.create({ ...input, loanId: loan.id });
+    expect(property.loanId).toBe(loan.id);
+
+    await expect(properties.create({ ...input, loanId: 'inconnu' })).rejects.toBeInstanceOf(ValidationError);
+  });
+
+  it('refuse de rattacher deux biens au même prêt', async () => {
+    const loan = await loans.create({
+      name: 'Prêt',
+      kind: 'MORTGAGE',
+      principal: 100_000,
+      annualRate: 0,
+      monthlyPayment: 10_000,
+      firstPaymentDate: '2026-10-05',
+    });
+    await properties.create({ ...input, loanId: loan.id });
+    await expect(properties.create({ ...input, name: 'Autre bien', loanId: loan.id })).rejects.toBeInstanceOf(
+      ValidationError,
+    );
+  });
+
+  it.each([
+    ['un nom vide', { ...input, name: '  ' }],
+    ['une valeur décimale', { ...input, estimatedValue: 100.5 }],
+    ['une valeur nulle', { ...input, estimatedValue: 0 }],
+    ['des frais négatifs', { ...input, sellingFeePercent: -1 }],
+    ['des frais supérieurs à 100 %', { ...input, sellingFeePercent: 120 }],
+  ])('refuse %s', async (_label, override) => {
+    await expect(properties.create(override)).rejects.toBeInstanceOf(ValidationError);
+    expect(await properties.list()).toEqual([]);
+  });
+
+  it('modifie un bien, y compris pour rattacher ou détacher son prêt', async () => {
+    const loan = await loans.create({
+      name: 'Prêt',
+      kind: 'MORTGAGE',
+      principal: 100_000,
+      annualRate: 0,
+      monthlyPayment: 10_000,
+      firstPaymentDate: '2026-10-05',
+    });
+    const property = await properties.create(input);
+
+    const attached = await properties.update(property.id, { loanId: loan.id });
+    expect(attached.loanId).toBe(loan.id);
+
+    const detached = await properties.update(property.id, { loanId: undefined });
+    expect('loanId' in detached).toBe(false);
+  });
+
+  it('supprime un bien et signale un bien inexistant', async () => {
+    const property = await properties.create(input);
+    await properties.remove(property.id);
+    expect(await properties.list()).toEqual([]);
+    await expect(properties.remove(property.id)).rejects.toBeInstanceOf(NotFoundError);
+    await expect(properties.update('inconnu', { name: 'x' })).rejects.toBeInstanceOf(NotFoundError);
   });
 });
 

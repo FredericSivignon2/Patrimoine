@@ -64,6 +64,11 @@ describe('lockLotsOf', () => {
     ]);
   });
 
+  it('reprend une tranche « disponible à la retraite » sans date', () => {
+    const account = savings({ lockedTranches: [{ amount: 300_000, unlockAtRetirement: true }] });
+    expect(lockLotsOf(account, [])).toEqual([{ amount: 300_000, unlockDate: undefined }]);
+  });
+
   it('ne bloque jamais un compte courant', () => {
     const account: Account = {
       id: 'c',
@@ -99,6 +104,12 @@ describe('lockedAmountAt', () => {
     expect(lockedAmountAt(lots, '2026-09-21', 0)).toBe(0);
     expect(lockedAmountAt(lots, '2026-09-21', -50_000)).toBe(0);
   });
+
+  it('compte un lot sans date (retraite) comme bloqué à n’importe quelle date', () => {
+    const withRetirement = [...lots, { amount: 50_000, unlockDate: undefined }];
+    expect(lockedAmountAt(withRetirement, '2026-09-21', 1_000_000)).toBe(350_000);
+    expect(lockedAmountAt(withRetirement, '2099-01-01', 1_000_000)).toBe(50_000);
+  });
 });
 
 describe('computeLocked', () => {
@@ -113,6 +124,12 @@ describe('computeLocked', () => {
 
   it('vaut zéro sans blocage', () => {
     expect(computeLocked(savings({ initialBalance: 100_000 }), [], REFERENCE)).toBe(0);
+  });
+
+  it('bloque indéfiniment une tranche « disponible à la retraite »', () => {
+    const account = savings({ initialBalance: 500_000, lockedTranches: [{ amount: 300_000, unlockAtRetirement: true }] });
+    expect(computeLocked(account, [], REFERENCE)).toBe(300_000);
+    expect(computeLocked(account, [], new Date(2060, 0, 1))).toBe(300_000);
   });
 });
 
@@ -142,5 +159,17 @@ describe('unlockSchedule', () => {
 
   it('est vide sans blocage', () => {
     expect(unlockSchedule([savings()], [deposit(10_000, '2026-01-10')], REFERENCE)).toEqual([]);
+  });
+
+  it('omet une tranche « disponible à la retraite » (date inconnue)', () => {
+    const accounts = [
+      savings({
+        lockedTranches: [
+          { amount: 100_000, unlockDate: '2027-03-01' },
+          { amount: 300_000, unlockAtRetirement: true },
+        ],
+      }),
+    ];
+    expect(unlockSchedule(accounts, [], REFERENCE)).toEqual([{ accountId: 'pee', month: '2027-03', amount: 100_000 }]);
   });
 });

@@ -18,6 +18,8 @@ const data: PatrimoineData = {
       firstPaymentDate: '2026-10-05',
     },
   ],
+  banks: [],
+  properties: [],
 };
 
 describe('LocalStorageDriver', () => {

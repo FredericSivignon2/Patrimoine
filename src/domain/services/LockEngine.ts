@@ -4,10 +4,10 @@ import type { UnlockEvent } from '../models/Projection';
 import { sumCents, type Cents } from './FinancialMath';
 import { addYears, monthKeyOfIso, toIsoDate } from './Months';
 
-/** Somme bloquée jusqu'à `unlockDate`. */
+/** Somme bloquée jusqu'à `unlockDate` ; absente pour un lot débloqué seulement à la retraite (toujours bloqué). */
 export interface LockLot {
   amount: Cents;
-  unlockDate: string;
+  unlockDate?: string;
 }
 
 /**
@@ -31,11 +31,11 @@ export function lockLotsOf(account: Account, movements: readonly Movement[]): Lo
 
 /** Montant encore bloqué à la date `asOf` (ISO) : lots non débloqués, plafonnés au solde positif du compte. */
 export function lockedAmountAt(lots: readonly LockLot[], asOf: string, balance: Cents): Cents {
-  const locked = sumCents(lots.filter((lot) => lot.unlockDate > asOf).map((lot) => lot.amount));
+  const locked = sumCents(lots.filter((lot) => lot.unlockDate === undefined || lot.unlockDate > asOf).map((lot) => lot.amount));
   return Math.min(locked, Math.max(balance, 0));
 }
 
-/** Déblocages à venir, regroupés par compte et par mois, du plus proche au plus lointain. */
+/** Déblocages à venir, regroupés par compte et par mois, du plus proche au plus lointain (une tranche « retraite » n'a pas de date connue : elle n'y figure jamais). */
 export function unlockSchedule(
   accounts: readonly Account[],
   movements: readonly Movement[],
@@ -45,7 +45,7 @@ export function unlockSchedule(
   const events = new Map<string, UnlockEvent>();
   for (const account of accounts) {
     for (const lot of lockLotsOf(account, movements)) {
-      if (lot.unlockDate <= today) continue;
+      if (lot.unlockDate === undefined || lot.unlockDate <= today) continue;
       const month = monthKeyOfIso(lot.unlockDate);
       const key = `${account.id}|${month}`;
       const existing = events.get(key);

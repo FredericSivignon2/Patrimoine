@@ -66,6 +66,10 @@ interface PatrimoineHeroProps {
   monthlyContribution: number;
   status: SafetyStatus | undefined;
   onEditSafety: () => void;
+  /** Valeur nette de revente des biens loués (coussin de sécurité à part) ; absent ou nul, la ligne n'est pas affichée. */
+  propertyCushion?: number;
+  /** Détail par bien, pour l'info-bulle (« Appartement loué : 85 000 € »). */
+  propertyBreakdown?: string;
 }
 
 export function PatrimoineHero({
@@ -75,6 +79,8 @@ export function PatrimoineHero({
   monthlyContribution,
   status,
   onEditSafety,
+  propertyCushion,
+  propertyBreakdown,
 }: PatrimoineHeroProps) {
   const tone = TONES[status?.level ?? 'none'];
 
@@ -113,6 +119,12 @@ export function PatrimoineHero({
           {status ? 'Modifier' : 'Définir'}
         </button>
       </div>
+
+      {propertyCushion !== undefined && propertyCushion > 0 && (
+        <p className={`mt-2 px-1 text-xs ${tone.muted}`} title={propertyBreakdown}>
+          + {formatEuros(propertyCushion)} de coussin immobilier (biens loués, non déblocable rapidement)
+        </p>
+      )}
     </section>
   );
 }

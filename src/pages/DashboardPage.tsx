@@ -19,6 +19,7 @@ import { useAccounts } from '../hooks/useAccounts';
 import { useBudgets } from '../hooks/useBudgets';
 import { useLoans } from '../hooks/useLoans';
 import { useProjections } from '../hooks/useProjections';
+import { useProperties } from '../hooks/useProperties';
 import { useSafety } from '../hooks/useSafety';
 
 const deltaTone = (cents: number): string => (cents < 0 ? 'text-rose-700' : 'text-emerald-700');
@@ -34,8 +35,14 @@ export function DashboardPage() {
   const { settings, status } = useSafety(projection.currentAvailable);
   const { budgets, plan, spent, hasSafety, objectivesSummary } = useBudgets();
   const { items: loanItems, totals: loanTotals } = useLoans();
+  const { items: propertyItems, totalCushion } = useProperties();
   const { loadDemoData } = useFinancial();
   const [editingSafety, setEditingSafety] = useState(false);
+
+  const propertyBreakdown = useMemo(
+    () => propertyItems.map((item) => `${item.name} : ${formatEuros(item.cushion)}`).join(' · '),
+    [propertyItems],
+  );
 
   const allocation = useMemo(
     () =>
@@ -71,6 +78,8 @@ export function DashboardPage() {
         monthlyContribution={projection.monthlyContribution}
         status={status}
         onEditSafety={() => setEditingSafety(true)}
+        propertyCushion={totalCushion}
+        propertyBreakdown={propertyBreakdown}
       />
 
       <BudgetsSummaryCard plan={plan} hasSafety={hasSafety} objectivesNotReached={objectivesSummary.notReached} />

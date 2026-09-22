@@ -9,8 +9,10 @@ import { Modal } from '../components/common/Modal';
 import { PageHeader } from '../components/common/PageHeader';
 import { LoanForm } from '../components/loans/LoanForm';
 import { LoansSummary } from '../components/loans/LoansSummary';
+import { BankBadge } from '../components/common/bankBadge';
 import { LOAN_KIND_LABELS, LOAN_KINDS, type Loan } from '../domain/models/Loan';
 import { monthKeyOfIso } from '../domain/services/Months';
+import { useBanks } from '../hooks/useBanks';
 import { useLoans, type LoanItem } from '../hooks/useLoans';
 
 function LoanStatus({ item }: { item: LoanItem }) {
@@ -55,9 +57,11 @@ function PrepaymentNote({ item }: { item: LoanItem }) {
 
 export function LoansPage() {
   const { items, projection, totals, createLoan, updateLoan, removeLoan } = useLoans();
+  const { banks } = useBanks();
   const [editing, setEditing] = useState<Loan | 'new' | null>(null);
   const close = (): void => setEditing(null);
   const loanNames = useMemo(() => new Map(items.map((item) => [item.loan.id, item.loan.name])), [items]);
+  const bankNames = useMemo(() => new Map(banks.map((bank) => [bank.id, bank.name])), [banks]);
 
   return (
     <>
@@ -127,12 +131,17 @@ export function LoansPage() {
                           className="flex w-full flex-col gap-2 rounded-2xl bg-white p-4 text-left shadow-sm ring-1 ring-slate-200 transition hover:ring-teal-400"
                         >
                           <span className="flex items-start justify-between gap-3">
-                            <span className="min-w-0">
-                              <span className="block break-words font-semibold text-slate-900">{loan.name}</span>
-                              <span className="block text-xs text-slate-500">
-                                {loan.annualRate === 0 ? 'Taux zéro' : `${formatPercent(loan.annualRate)} / an`} ·{' '}
-                                {formatEuros(snapshot?.monthlyPayment ?? loan.monthlyPayment)} / mois
-                                {loan.monthlyInsurance ? ` + ${formatEuros(loan.monthlyInsurance)} d’assurance` : ''}
+                            <span className="flex min-w-0 items-start gap-2">
+                              {loan.bankId && bankNames.get(loan.bankId) && (
+                                <BankBadge name={bankNames.get(loan.bankId) ?? ''} className="mt-0.5" />
+                              )}
+                              <span className="min-w-0">
+                                <span className="block break-words font-semibold text-slate-900">{loan.name}</span>
+                                <span className="block text-xs text-slate-500">
+                                  {loan.annualRate === 0 ? 'Taux zéro' : `${formatPercent(loan.annualRate)} / an`} ·{' '}
+                                  {formatEuros(snapshot?.monthlyPayment ?? loan.monthlyPayment)} / mois
+                                  {loan.monthlyInsurance ? ` + ${formatEuros(loan.monthlyInsurance)} d’assurance` : ''}
+                                </span>
                               </span>
                             </span>
                             <span className="flex items-center gap-1">
@@ -179,6 +188,7 @@ export function LoansPage() {
         <Modal title={editing === 'new' ? 'Nouveau prêt' : 'Modifier le prêt'} onClose={close}>
           <LoanForm
             loan={editing === 'new' ? undefined : editing}
+            banks={banks}
             onCancel={close}
             onSubmit={async (input) => {
               if (editing === 'new') await createLoan(input);

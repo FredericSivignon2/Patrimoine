@@ -29,6 +29,8 @@ const dataWith = (name: string): PatrimoineData => ({
   movements: [],
   budgets: [],
   loans: [],
+  banks: [],
+  properties: [],
 });
 const names = (data: PatrimoineData): string[] => data.accounts.map((account) => account.name);
 

@@ -51,6 +51,8 @@ export interface Loan {
    * (`principal`), sous peine de les compter deux fois.
    */
   prepayments?: LoanPrepayment[];
+  /** Banque prêteuse (facultatif). */
+  bankId?: string;
 }
 
 export type NewLoan = Omit<Loan, 'id'>;

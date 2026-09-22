@@ -1,6 +1,8 @@
 import { useState, type FormEvent } from 'react';
 import { MAX_DEPOSIT_LOCK_YEARS, type Account, type AccountType, type LockedTranche, type NewAccount } from '../../domain/models/Account';
+import type { Bank } from '../../domain/models/Bank';
 import { centsToInputString, parseAmountToCents, parsePercent } from '../../domain/services/FinancialMath';
+import { BankSelect } from '../banks/BankSelect';
 import { Button } from '../common/Button';
 import { errorMessage } from '../common/errorMessage';
 import { DeleteButton, Field, FormError, Segmented, SuffixInput, inputClass } from '../common/fields';
@@ -17,27 +19,33 @@ interface TrancheRow {
   key: number;
   amount: string;
   date: string;
+  /** Vrai : la tranche ne se débloque qu'à la retraite, le champ date est alors ignoré. */
+  retirement: boolean;
 }
 
 let rowKeySeed = 0;
-const newRow = (amount = '', date = ''): TrancheRow => ({ key: ++rowKeySeed, amount, date });
+const newRow = (amount = '', date = '', retirement = false): TrancheRow => ({ key: ++rowKeySeed, amount, date, retirement });
 
 interface AccountFormProps {
   account?: Account;
+  banks: readonly Bank[];
   movementCount?: number;
   onSubmit: (input: NewAccount) => Promise<unknown>;
   onDelete?: () => Promise<unknown>;
   onCancel: () => void;
 }
 
-export function AccountForm({ account, movementCount = 0, onSubmit, onDelete, onCancel }: AccountFormProps) {
+export function AccountForm({ account, banks, movementCount = 0, onSubmit, onDelete, onCancel }: AccountFormProps) {
   const [name, setName] = useState(account?.name ?? '');
   const [type, setType] = useState<AccountType>(account?.type ?? 'CHECKING');
+  const [bankId, setBankId] = useState(account?.bankId ?? '');
   const [balance, setBalance] = useState(account ? centsToInputString(account.initialBalance) : '');
   const [rate, setRate] = useState(account?.interestRate === undefined ? '' : String(account.interestRate).replace('.', ','));
   const [lockYears, setLockYears] = useState(account?.depositLockYears === undefined ? '' : String(account.depositLockYears));
   const [tranches, setTranches] = useState<TrancheRow[]>(() =>
-    (account?.lockedTranches ?? []).map((tranche) => newRow(centsToInputString(tranche.amount), tranche.unlockDate)),
+    (account?.lockedTranches ?? []).map((tranche) =>
+      newRow(centsToInputString(tranche.amount), tranche.unlockDate ?? '', Boolean(tranche.unlockAtRetirement)),
+    ),
   );
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -86,17 +94,35 @@ export function AccountForm({ account, movementCount = 0, onSubmit, onDelete, on
         depositLockYears = years;
       }
       for (const [index, row] of tranches.entries()) {
-        if (row.amount.trim() === '' && row.date === '') continue; // ligne vide ignorée
+        if (row.amount.trim() === '' && row.date === '' && !row.retirement) continue; // ligne vide ignorée
         const amount = parseAmountToCents(row.amount);
-        if (amount === null || amount <= 0 || row.date === '') {
-          setError(`Tranche ${index + 1} : saisissez un montant positif et une date de déblocage.`);
+        if (amount === null || amount <= 0) {
+          setError(`Tranche ${index + 1} : saisissez un montant positif.`);
           return;
         }
-        lockedTranches.push({ amount, unlockDate: row.date });
+        if (row.retirement) {
+          lockedTranches.push({ amount, unlockAtRetirement: true });
+        } else {
+          if (row.date === '') {
+            setError(`Tranche ${index + 1} : saisissez une date de déblocage, ou cochez « disponible à la retraite ».`);
+            return;
+          }
+          lockedTranches.push({ amount, unlockDate: row.date });
+        }
       }
     }
 
-    void run(() => onSubmit({ name, type, initialBalance, interestRate, lockedTranches, depositLockYears }));
+    void run(() =>
+      onSubmit({
+        name,
+        type,
+        initialBalance,
+        interestRate,
+        lockedTranches,
+        depositLockYears,
+        bankId: bankId || undefined,
+      }),
+    );
   };
 
   return (
@@ -113,6 +139,7 @@ export function AccountForm({ account, movementCount = 0, onSubmit, onDelete, on
         />
       </Field>
       <Segmented legend="Type de compte" name="account-type" value={type} options={TYPE_OPTIONS} onChange={setType} />
+      <BankSelect banks={banks} value={bankId} onChange={setBankId} />
       <Field label="Solde initial" hint="Solde avant le premier mouvement enregistré.">
         <SuffixInput suffix="€" value={balance} onChange={(event) => setBalance(event.target.value)} placeholder="0,00" />
       </Field>
@@ -141,6 +168,7 @@ export function AccountForm({ account, movementCount = 0, onSubmit, onDelete, on
               <p className="text-sm font-medium text-slate-700">Fonds déjà bloqués</p>
               <p className="text-xs text-slate-500">
                 Une tranche par échéance de déblocage, pour le stock présent aujourd’hui (ex. les annuités d’un PEE).
+                Si la date n’est pas connue (déblocage à la retraite), cochez la case plutôt que de deviner une date.
               </p>
               {tranches.map((row, index) => (
                 <fieldset key={row.key} className="rounded-xl bg-white p-3 ring-1 ring-slate-200">
@@ -156,23 +184,36 @@ export function AccountForm({ account, movementCount = 0, onSubmit, onDelete, on
                       <XIcon className="size-4" />
                     </button>
                   </div>
-                  <div className="grid grid-cols-2 gap-2">
-                    <Field label="Montant bloqué">
-                      <SuffixInput
-                        suffix="€"
-                        value={row.amount}
-                        onChange={(event) => updateRow(row.key, { amount: event.target.value })}
-                        placeholder="0,00"
-                      />
-                    </Field>
-                    <Field label="Débloqué le">
+                  <div className="space-y-2">
+                    <div className="grid grid-cols-2 gap-2">
+                      <Field label="Montant bloqué">
+                        <SuffixInput
+                          suffix="€"
+                          value={row.amount}
+                          onChange={(event) => updateRow(row.key, { amount: event.target.value })}
+                          placeholder="0,00"
+                        />
+                      </Field>
+                      {!row.retirement && (
+                        <Field label="Débloqué le">
+                          <input
+                            type="date"
+                            className={inputClass}
+                            value={row.date}
+                            onChange={(event) => updateRow(row.key, { date: event.target.value })}
+                          />
+                        </Field>
+                      )}
+                    </div>
+                    <label className="flex items-center gap-2 text-sm text-slate-700">
                       <input
-                        type="date"
-                        className={inputClass}
-                        value={row.date}
-                        onChange={(event) => updateRow(row.key, { date: event.target.value })}
+                        type="checkbox"
+                        className="size-4 rounded border-slate-300 text-teal-600 focus:ring-teal-600"
+                        checked={row.retirement}
+                        onChange={(event) => updateRow(row.key, { retirement: event.target.checked, date: '' })}
                       />
-                    </Field>
+                      Disponible à la retraite (date inconnue)
+                    </label>
                   </div>
                 </fieldset>
               ))}

@@ -1,4 +1,5 @@
 import { MAX_DEPOSIT_LOCK_YEARS, type Account, type LockedTranche } from '../../domain/models/Account';
+import type { Bank } from '../../domain/models/Bank';
 import type { Budget } from '../../domain/models/Budget';
 import { InvalidDataError } from '../../domain/models/errors';
 import {
@@ -11,6 +12,7 @@ import {
 } from '../../domain/models/Loan';
 import type { Movement } from '../../domain/models/Movement';
 import { DATA_VERSION, type PatrimoineData } from '../../domain/models/PatrimoineData';
+import type { Property } from '../../domain/models/Property';
 import type { SafetySettings } from '../../domain/models/Safety';
 import { buildAmortization } from '../../domain/services/LoanEngine';
 import { isValidIsoDate } from '../../domain/services/Months';
@@ -24,9 +26,13 @@ const isPresent = (value: unknown): boolean => value !== undefined && value !== 
 
 function parseTranche(raw: unknown, where: string): LockedTranche {
   if (!isRecord(raw)) throw new InvalidDataError(`${where} : objet attendu.`);
-  const { amount, unlockDate } = raw;
+  const { amount, unlockDate, unlockAtRetirement } = raw;
   if (typeof amount !== 'number' || !Number.isSafeInteger(amount) || amount <= 0) {
     throw new InvalidDataError(`${where} : montant invalide (centimes entiers positifs attendus).`);
+  }
+  if (unlockAtRetirement === true) {
+    if (isPresent(unlockDate)) throw new InvalidDataError(`${where} : une tranche datée ne peut pas être « à la retraite ».`);
+    return { amount, unlockAtRetirement: true };
   }
   if (typeof unlockDate !== 'string' || !isValidIsoDate(unlockDate)) {
     throw new InvalidDataError(`${where} : date de déblocage invalide.`);
@@ -34,10 +40,16 @@ function parseTranche(raw: unknown, where: string): LockedTranche {
   return { amount, unlockDate };
 }
 
+function parseBankId(bankId: unknown, where: string): string | undefined {
+  if (!isPresent(bankId)) return undefined;
+  if (typeof bankId !== 'string' || bankId === '') throw new InvalidDataError(`${where} : banque invalide.`);
+  return bankId;
+}
+
 function parseAccount(raw: unknown, index: number): Account {
   const where = `comptes[${index}]`;
   if (!isRecord(raw)) throw new InvalidDataError(`${where} : objet attendu.`);
-  const { id, name, type, initialBalance, interestRate, lockedTranches, depositLockYears } = raw;
+  const { id, name, type, initialBalance, interestRate, lockedTranches, depositLockYears, bankId } = raw;
   if (typeof id !== 'string' || id === '') throw new InvalidDataError(`${where} : identifiant manquant.`);
   if (typeof name !== 'string') throw new InvalidDataError(`${where} : nom invalide.`);
   if (type !== 'CHECKING' && type !== 'SAVINGS') throw new InvalidDataError(`${where} : type invalide.`);
@@ -46,6 +58,8 @@ function parseAccount(raw: unknown, index: number): Account {
   }
 
   const account: Account = { id, name, type, initialBalance };
+  const accountBankId = parseBankId(bankId, where);
+  if (accountBankId !== undefined) account.bankId = accountBankId;
   if (isPresent(interestRate)) {
     if (typeof interestRate !== 'number' || !Number.isFinite(interestRate) || interestRate < 0) {
       throw new InvalidDataError(`${where} : taux invalide.`);
@@ -114,7 +128,8 @@ function parsePrepayment(raw: unknown, where: string): LoanPrepayment {
 function parseLoan(raw: unknown, index: number): Loan {
   const where = `prêts[${index}]`;
   if (!isRecord(raw)) throw new InvalidDataError(`${where} : objet attendu.`);
-  const { id, name, kind, principal, annualRate, monthlyPayment, monthlyInsurance, firstPaymentDate, prepayments } = raw;
+  const { id, name, kind, principal, annualRate, monthlyPayment, monthlyInsurance, firstPaymentDate, prepayments, bankId } =
+    raw;
   if (typeof id !== 'string' || id === '') throw new InvalidDataError(`${where} : identifiant manquant.`);
   if (typeof name !== 'string') throw new InvalidDataError(`${where} : nom invalide.`);
   if (!isLoanKind(kind)) throw new InvalidDataError(`${where} : type invalide.`);
@@ -144,10 +159,42 @@ function parseLoan(raw: unknown, index: number): Loan {
       .map((prepayment, prepaymentIndex) => parsePrepayment(prepayment, `${where}.remboursementsAnticipés[${prepaymentIndex}]`))
       .sort((a, b) => a.date.localeCompare(b.date));
   }
+  const loanBankId = parseBankId(bankId, where);
+  if (loanBankId !== undefined) loan.bankId = loanBankId;
   if (!buildAmortization(loan).complete) {
     throw new InvalidDataError(`${where} : l'échéancier ne se termine pas (mensualité trop faible ou durée excessive).`);
   }
   return loan;
+}
+
+function parseBank(raw: unknown, index: number): Bank {
+  const where = `banques[${index}]`;
+  if (!isRecord(raw)) throw new InvalidDataError(`${where} : objet attendu.`);
+  const { id, name } = raw;
+  if (typeof id !== 'string' || id === '') throw new InvalidDataError(`${where} : identifiant manquant.`);
+  if (typeof name !== 'string' || name.trim() === '') throw new InvalidDataError(`${where} : nom invalide.`);
+  return { id, name };
+}
+
+function parseProperty(raw: unknown, index: number): Property {
+  const where = `biens[${index}]`;
+  if (!isRecord(raw)) throw new InvalidDataError(`${where} : objet attendu.`);
+  const { id, name, estimatedValue, loanId, sellingFeePercent } = raw;
+  if (typeof id !== 'string' || id === '') throw new InvalidDataError(`${where} : identifiant manquant.`);
+  if (typeof name !== 'string') throw new InvalidDataError(`${where} : nom invalide.`);
+  if (typeof estimatedValue !== 'number' || !Number.isSafeInteger(estimatedValue) || estimatedValue <= 0) {
+    throw new InvalidDataError(`${where} : valeur estimée invalide (centimes entiers positifs attendus).`);
+  }
+  if (typeof sellingFeePercent !== 'number' || !Number.isFinite(sellingFeePercent) || sellingFeePercent < 0 || sellingFeePercent > 100) {
+    throw new InvalidDataError(`${where} : frais de vente invalides (entre 0 et 100 attendu).`);
+  }
+
+  const property: Property = { id, name, estimatedValue, sellingFeePercent };
+  if (isPresent(loanId)) {
+    if (typeof loanId !== 'string' || loanId === '') throw new InvalidDataError(`${where} : prêt rattaché invalide.`);
+    property.loanId = loanId;
+  }
+  return property;
 }
 
 function parseBudget(raw: unknown, index: number): Budget {
@@ -201,11 +248,15 @@ export function parsePatrimoineData(raw: unknown): PatrimoineData {
       `Version de fichier non prise en charge : ${String(raw.version)}. Mettez l’application à jour.`,
     );
   }
-  const { accounts, movements, budgets, loans, safety } = raw;
+  const { accounts, movements, budgets, loans, banks, properties, safety } = raw;
   if (!isUnknownArray(accounts)) throw new InvalidDataError('La liste des comptes est manquante.');
   if (!isUnknownArray(movements)) throw new InvalidDataError('La liste des mouvements est manquante.');
   if (isPresent(budgets) && !isUnknownArray(budgets)) throw new InvalidDataError('La liste des postes est invalide.');
   if (isPresent(loans) && !isUnknownArray(loans)) throw new InvalidDataError('La liste des prêts est invalide.');
+  if (isPresent(banks) && !isUnknownArray(banks)) throw new InvalidDataError('La liste des banques est invalide.');
+  if (isPresent(properties) && !isUnknownArray(properties)) {
+    throw new InvalidDataError('La liste des biens immobiliers est invalide.');
+  }
 
   const data: PatrimoineData = {
     version: DATA_VERSION,
@@ -213,6 +264,8 @@ export function parsePatrimoineData(raw: unknown): PatrimoineData {
     movements: movements.map(parseMovement),
     budgets: isUnknownArray(budgets) ? budgets.map(parseBudget) : [],
     loans: isUnknownArray(loans) ? loans.map(parseLoan) : [],
+    banks: isUnknownArray(banks) ? banks.map(parseBank) : [],
+    properties: isUnknownArray(properties) ? properties.map(parseProperty) : [],
   };
   if (isPresent(safety)) data.safety = parseSafety(safety);
   return data;

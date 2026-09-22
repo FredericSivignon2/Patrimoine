@@ -38,6 +38,8 @@ const seeded = (): PatrimoineData => ({
   ],
   budgets: [],
   loans: [],
+  banks: [],
+  properties: [],
 });
 
 async function renderApp(path = '/', initial: PatrimoineData | null = null) {
@@ -448,6 +450,8 @@ const GROWING: PatrimoineData = {
   movements: [],
   budgets: [],
   loans: [],
+  banks: [],
+  properties: [],
   safety: { threshold: 1_000_000, comfortMargin: 500_000 },
 };
 const growingProjection = () => projectPortfolio(GROWING.accounts, GROWING.movements, new Date());
@@ -1303,5 +1307,210 @@ describe('Fonds bloqués', () => {
   it('n’affiche pas de déblocages quand aucun fonds n’est bloqué', async () => {
     await renderApp('/', seeded());
     expect(screen.queryByRole('heading', { name: 'Prochains déblocages' })).not.toBeInTheDocument();
+  });
+
+  it('coche « disponible à la retraite » : aucune date requise, la tranche est bloquée sans échéance connue', async () => {
+    const { storage, user } = await renderApp('/comptes');
+
+    await user.click(screen.getByRole('button', { name: /nouveau compte/i }));
+    const dialog = await screen.findByRole('dialog', { name: /nouveau compte/i });
+    await user.type(within(dialog).getByLabelText(/nom du compte/i), 'PEE');
+    await user.click(within(dialog).getByLabelText('Épargne'));
+    await user.click(within(dialog).getByRole('button', { name: /ajouter une tranche/i }));
+    const tranche = within(within(dialog).getByRole('group', { name: 'Tranche 1' }));
+    await user.type(tranche.getByLabelText(/montant bloqué/i), '3000');
+
+    await user.click(tranche.getByLabelText(/disponible à la retraite/i));
+    expect(tranche.queryByLabelText(/débloqué le/i)).not.toBeInTheDocument();
+
+    await user.click(within(dialog).getByRole('button', { name: 'Enregistrer' }));
+
+    expect(storage.stored?.accounts[0].lockedTranches).toEqual([{ amount: 300_000, unlockAtRetirement: true }]);
+  });
+
+  it('n’affiche pas une tranche « retraite » dans les prochains déblocages, mais la compte comme bloquée', async () => {
+    const data = withPee();
+    data.accounts[data.accounts.length - 1] = {
+      ...data.accounts[data.accounts.length - 1],
+      lockedTranches: [
+        { amount: 30_000, unlockDate: '2098-06-10' },
+        { amount: 150_000, unlockAtRetirement: true },
+      ],
+    };
+    await renderApp('/', data);
+
+    const banner = within(screen.getByRole('region', { name: 'Patrimoine' }));
+    expect(banner.getByText(euros('1 800,00 €'))).toBeInTheDocument(); // toujours bloqué : 300 + 1 500 €
+
+    const schedule = within(screen.getByRole('heading', { name: 'Prochains déblocages' }).closest('section') as HTMLElement);
+    expect(schedule.getByText(/juin 2098/i)).toBeInTheDocument();
+    expect(schedule.queryByText(euros('+1 500,00 €'))).not.toBeInTheDocument();
+  });
+});
+
+describe('Banques', () => {
+  it('ajoute une banque, la propose à un compte et affiche son badge', async () => {
+    const { storage, user } = await renderApp('/comptes');
+
+    const banksCard = within(screen.getByRole('heading', { name: 'Banques' }).closest('section') as HTMLElement);
+    await user.type(banksCard.getByLabelText(/nom de la banque/i), 'LCL');
+    await user.click(banksCard.getByRole('button', { name: 'Ajouter' }));
+    expect(await banksCard.findByRole('button', { name: /retirer lcl/i })).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: /nouveau compte/i }));
+    const dialog = await screen.findByRole('dialog', { name: /nouveau compte/i });
+    await user.type(within(dialog).getByLabelText(/nom du compte/i), 'Livret LCL');
+    await user.selectOptions(within(dialog).getByLabelText(/^banque/i), 'LCL');
+    await user.click(within(dialog).getByRole('button', { name: 'Enregistrer' }));
+
+    const accountRow = (await screen.findByText('Livret LCL')).closest('button') as HTMLElement;
+    expect(within(accountRow).getByRole('img', { name: 'LCL' })).toBeInTheDocument();
+    const created = storage.stored?.accounts.find((account) => account.name === 'Livret LCL');
+    expect(created?.bankId).toBe(storage.stored?.banks[0]?.id);
+  });
+
+  it('propose les banques suggérées en un clic, puis les retire des suggestions', async () => {
+    const { user } = await renderApp('/comptes');
+    const banksCard = within(screen.getByRole('heading', { name: 'Banques' }).closest('section') as HTMLElement);
+
+    await user.click(banksCard.getByRole('button', { name: '+ La Banque Postale' }));
+    expect(await banksCard.findByText('La Banque Postale')).toBeInTheDocument();
+    expect(banksCard.queryByRole('button', { name: '+ La Banque Postale' })).not.toBeInTheDocument();
+  });
+
+  it('refuse un nom vide ou déjà utilisé', async () => {
+    const { storage, user } = await renderApp('/comptes');
+    const banksCard = within(screen.getByRole('heading', { name: 'Banques' }).closest('section') as HTMLElement);
+
+    expect(banksCard.getByRole('button', { name: 'Ajouter' })).toBeDisabled();
+
+    await user.type(banksCard.getByLabelText(/nom de la banque/i), 'LCL');
+    await user.click(banksCard.getByRole('button', { name: 'Ajouter' }));
+    await user.type(banksCard.getByLabelText(/nom de la banque/i), 'lcl');
+    await user.click(banksCard.getByRole('button', { name: 'Ajouter' }));
+
+    expect(await banksCard.findByRole('alert')).toHaveTextContent(/existe déjà/i);
+    expect(storage.stored?.banks).toHaveLength(1);
+  });
+
+  it('détache les comptes rattachés quand la banque est supprimée', async () => {
+    const { storage, user } = await renderApp('/comptes');
+    const banksCard = within(screen.getByRole('heading', { name: 'Banques' }).closest('section') as HTMLElement);
+    await user.click(banksCard.getByRole('button', { name: '+ LCL' }));
+    await banksCard.findByRole('button', { name: /retirer lcl/i });
+
+    await user.click(screen.getByRole('button', { name: /nouveau compte/i }));
+    const dialog = await screen.findByRole('dialog', { name: /nouveau compte/i });
+    await user.type(within(dialog).getByLabelText(/nom du compte/i), 'Livret LCL');
+    await user.selectOptions(within(dialog).getByLabelText(/^banque/i), 'LCL');
+    await user.click(within(dialog).getByRole('button', { name: 'Enregistrer' }));
+    const accountRow = (await screen.findByText('Livret LCL')).closest('button') as HTMLElement;
+    await within(accountRow).findByRole('img', { name: 'LCL' });
+
+    await user.click(banksCard.getByRole('button', { name: /retirer lcl/i }));
+
+    expect(screen.queryByRole('img', { name: 'LCL' })).not.toBeInTheDocument();
+    expect(storage.stored?.accounts.find((account) => account.name === 'Livret LCL')?.bankId).toBeUndefined();
+  });
+
+  it('rattache un prêt existant à une banque, affichée sur sa carte', async () => {
+    const { storage, user } = await renderApp('/comptes');
+    const banksCard = within(screen.getByRole('heading', { name: 'Banques' }).closest('section') as HTMLElement);
+    await user.click(banksCard.getByRole('button', { name: '+ LCL' }));
+    await banksCard.findByRole('button', { name: /retirer lcl/i });
+
+    await user.click(mobileNav().getByRole('link', { name: /prêts/i }));
+    await user.click(await screen.findByRole('button', { name: /nouveau prêt/i }));
+    const dialog = await screen.findByRole('dialog', { name: /nouveau prêt/i });
+    await user.type(within(dialog).getByLabelText(/nom du prêt/i), 'Prêt LCL');
+    await user.type(within(dialog).getByLabelText(/capital restant dû/i), '10000');
+    await user.type(within(dialog).getByLabelText(/taux annuel/i), '0');
+    await user.type(within(dialog).getByLabelText(/mensualité \(hors assurance\)/i), '500');
+    await user.selectOptions(within(dialog).getByLabelText(/banque prêteuse/i), 'LCL');
+    await user.click(within(dialog).getByRole('button', { name: 'Enregistrer' }));
+
+    expect(await screen.findByRole('img', { name: 'LCL' })).toBeInTheDocument();
+    expect(storage.stored?.loans[0].bankId).toBe(storage.stored?.banks[0]?.id);
+  });
+});
+
+describe('Biens immobiliers loués', () => {
+  const withLoan = (): PatrimoineData => ({
+    ...seeded(),
+    loans: [
+      {
+        id: 'loan1',
+        name: 'Prêt secondaire',
+        kind: 'MORTGAGE',
+        principal: 10_000_000,
+        annualRate: 0,
+        monthlyPayment: 100_000,
+        firstPaymentDate: '2027-01-05',
+      },
+    ],
+  });
+
+  const propertiesCard = () =>
+    within(screen.getByRole('heading', { name: 'Biens immobiliers loués' }).closest('section') as HTMLElement);
+
+  it('ajoute un bien rattaché à un prêt, montre son coussin net et l’additionne à la bannière', async () => {
+    const { storage, user } = await renderApp('/comptes', withLoan());
+    const card = propertiesCard();
+
+    await user.click(card.getByRole('button', { name: /ajouter/i }));
+    const dialog = await screen.findByRole('dialog', { name: 'Nouveau bien' });
+    await user.type(within(dialog).getByLabelText(/nom du bien/i), 'Appartement loué');
+    await user.type(within(dialog).getByLabelText(/valeur estimée/i), '200000');
+    const fee = within(dialog).getByLabelText(/^frais de vente/i);
+    await user.clear(fee);
+    await user.type(fee, '8');
+    await user.selectOptions(within(dialog).getByLabelText(/prêt rattaché/i), 'Prêt secondaire');
+    await user.click(within(dialog).getByRole('button', { name: 'Enregistrer' }));
+
+    // 200 000 € - 100 000 € (capital restant dû, rien remboursé) - 16 000 € (8 %) = 84 000 €
+    expect(await card.findByText(euros('84 000,00 €'))).toBeInTheDocument();
+    expect(storage.stored?.properties[0]).toMatchObject({
+      name: 'Appartement loué',
+      estimatedValue: 20_000_000,
+      loanId: 'loan1',
+      sellingFeePercent: 8,
+    });
+
+    await user.click(mobileNav().getByRole('link', { name: /accueil/i }));
+    const banner = within(await screen.findByRole('region', { name: 'Patrimoine' }));
+    expect(banner.getByText(/coussin immobilier/i)).toHaveTextContent(euros('84 000,00 €'));
+  });
+
+  it('refuse une valeur estimée invalide', async () => {
+    const { user } = await renderApp('/comptes', withLoan());
+    await user.click(propertiesCard().getByRole('button', { name: /ajouter/i }));
+    const dialog = await screen.findByRole('dialog', { name: 'Nouveau bien' });
+    await user.type(within(dialog).getByLabelText(/nom du bien/i), 'Appartement loué');
+    await user.click(within(dialog).getByRole('button', { name: 'Enregistrer' }));
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent(/valeur estimée invalide/i);
+  });
+
+  it('détache le bien quand son prêt est supprimé, sans supprimer le bien', async () => {
+    const { storage, user } = await renderApp('/comptes', withLoan());
+    const card = propertiesCard();
+    await user.click(card.getByRole('button', { name: /ajouter/i }));
+    let dialog = await screen.findByRole('dialog', { name: 'Nouveau bien' });
+    await user.type(within(dialog).getByLabelText(/nom du bien/i), 'Appartement loué');
+    await user.type(within(dialog).getByLabelText(/valeur estimée/i), '200000');
+    await user.selectOptions(within(dialog).getByLabelText(/prêt rattaché/i), 'Prêt secondaire');
+    await user.click(within(dialog).getByRole('button', { name: 'Enregistrer' }));
+    await card.findByText('Appartement loué');
+
+    await user.click(mobileNav().getByRole('link', { name: /prêts/i }));
+    await user.click(await screen.findByRole('button', { name: /prêt secondaire/i }));
+    dialog = await screen.findByRole('dialog', { name: /modifier le prêt/i });
+    await user.click(within(dialog).getByRole('button', { name: 'Supprimer le prêt' }));
+    await user.click(within(dialog).getByRole('button', { name: 'Confirmer la suppression' }));
+
+    await user.click(mobileNav().getByRole('link', { name: /comptes/i }));
+    await user.click(await propertiesCard().findByText('Appartement loué'));
+    const editDialog = await screen.findByRole('dialog', { name: 'Modifier le bien' });
+    expect(within(editDialog).getByLabelText(/prêt rattaché/i)).toHaveValue('');
+    expect(storage.stored?.properties[0]).not.toHaveProperty('loanId');
   });
 });

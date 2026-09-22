@@ -12,6 +12,8 @@ const dataWith = (name: string): PatrimoineData => ({
   movements: [],
   budgets: [],
   loans: [],
+  banks: [],
+  properties: [],
 });
 
 let client: FakeDriveClient;
