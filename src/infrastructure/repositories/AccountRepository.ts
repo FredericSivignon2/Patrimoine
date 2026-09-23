@@ -36,6 +36,7 @@ export class AccountRepository implements IAccountRepository {
     });
   }
 
+  /** Supprime le compte, ses mouvements, et retire ses éventuelles allocations dans les fonds réservés d'un prêt. */
   remove(id: string): Promise<void> {
     return this.store.mutate((data) => {
       if (!data.accounts.some((account) => account.id === id)) {
@@ -46,6 +47,16 @@ export class AccountRepository implements IAccountRepository {
           ...data,
           accounts: data.accounts.filter((account) => account.id !== id),
           movements: data.movements.filter((movement) => movement.accountId !== id),
+          loans: data.loans.map((loan) => {
+            if (!loan.reservedFunds) return loan;
+            const allocations = loan.reservedFunds.allocations.filter((allocation) => allocation.accountId !== id);
+            if (allocations.length === loan.reservedFunds.allocations.length) return loan;
+            if (allocations.length === 0) {
+              const { reservedFunds: _removed, ...withoutReserved } = loan;
+              return withoutReserved;
+            }
+            return { ...loan, reservedFunds: { ...loan.reservedFunds, allocations } };
+          }),
         },
         result: undefined,
       };

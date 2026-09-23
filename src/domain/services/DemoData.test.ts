@@ -4,7 +4,7 @@ import { evaluateObjectives, planBudgets, spendableTimeline, summarizeObjectives
 import { createDemoData } from './DemoData';
 import { buildAmortization, finalRegularPayment, loanSnapshot, projectLoans } from './LoanEngine';
 import { evaluateSafety } from './SafetyEngine';
-import { computeLocked, projectPortfolio } from './ProjectionEngine';
+import { computeLocked, computeReserved, projectPortfolio } from './ProjectionEngine';
 import { propertyCushion } from './PropertyEngine';
 import { evaluateSavingsEffort } from './SavingsEffortEngine';
 import { spentByBudget } from './SpendingReport';
@@ -132,6 +132,29 @@ describe('createDemoData', () => {
     expect(report.windows).toHaveLength(4);
     expect(report.current.months).toBe(3);
     expect(report.current.availableMonths).toBeGreaterThan(0);
+  });
+
+  it('réserve une partie du prêt conso sur deux comptes, exclue du déblocable jusqu’à son paiement', () => {
+    const conso = demo.loans.find((loan) => loan.kind === 'CONSUMER');
+    const livret = demo.accounts.find((account) => account.name === 'Livret A');
+    const assuranceVie = demo.accounts.find((account) => account.name === 'Assurance vie');
+    if (!conso || !livret || !assuranceVie) throw new Error('données de démonstration manquantes');
+
+    expect(conso.reservedFunds?.allocations).toEqual([
+      { accountId: livret.id, amount: 100_000 },
+      { accountId: assuranceVie.id, amount: 50_000 },
+    ]);
+
+    expect(computeReserved(livret, demo.movements, REFERENCE, demo.loans)).toBe(100_000);
+    expect(computeReserved(assuranceVie, demo.movements, REFERENCE, demo.loans)).toBe(50_000);
+
+    const withoutLoans = projectPortfolio(demo.accounts, demo.movements, REFERENCE);
+    const withLoans = projectPortfolio(demo.accounts, demo.movements, REFERENCE, demo.loans);
+    expect(withLoans.currentReserved).toBe(150_000);
+    expect(withLoans.currentAvailable).toBe(withoutLoans.currentAvailable - 150_000);
+
+    // La réservation reste modeste : la bannière de sécurité du tableau de bord reste « confortable ».
+    if (demo.safety) expect(evaluateSafety(withLoans.currentAvailable, demo.safety).level).toBe('ok');
   });
 
   it('montre un bien loué rattaché au prêt secondaire, avec un coussin positif', () => {

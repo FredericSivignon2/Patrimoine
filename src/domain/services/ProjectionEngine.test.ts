@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import type { Account } from '../models/Account';
+import type { Loan } from '../models/Loan';
 import type { Movement, MovementType } from '../models/Movement';
 import { PROJECTION_HORIZONS } from '../models/Projection';
 import {
   averageMonthlyNet,
   computeBalance,
+  computeReserved,
   monthlyNetSeries,
   projectAccount,
   projectBalances,
@@ -225,7 +227,7 @@ describe('projectAccount', () => {
     expect(projection.monthlyContribution).toBe(10_000);
     expect(projection.annualRate).toBe(0);
     expect(projection.points).toHaveLength(61);
-    const free = (month: string, balance: number) => ({ month, balance, locked: 0, available: balance });
+    const free = (month: string, balance: number) => ({ month, balance, locked: 0, reserved: 0, available: balance });
     expect(projection.points[0]).toEqual(free('2026-09', 130_000));
     expect(projection.points[12]).toEqual(free('2027-09', 130_000 + 12 * 10_000));
     expect(projection.points[60]).toEqual(free('2031-09', 130_000 + 60 * 10_000));
@@ -363,6 +365,105 @@ describe('projection avec fonds bloqués', () => {
       [60, 0, 800_000],
     ]);
     for (const point of portfolio.points) expect(point.available).toBe(point.balance - point.locked);
+  });
+});
+
+describe('fonds réservés (prêts)', () => {
+  const loanReserving = (allocations: { accountId: string; amount: number }[], id = 'l1'): Loan => ({
+    id,
+    name: 'Prêt conso travaux',
+    kind: 'CONSUMER',
+    principal: 1_000_000,
+    annualRate: 0,
+    monthlyPayment: 50_000,
+    firstPaymentDate: '2026-10-05',
+    reservedFunds: { allocations },
+  });
+
+  describe('computeReserved', () => {
+    it('vaut 0 sans prêt réservant ce compte', () => {
+      expect(computeReserved(account(), [], REFERENCE, [])).toBe(0);
+      expect(computeReserved(account(), [], REFERENCE, [loanReserving([{ accountId: 'autre', amount: 50_000 }])])).toBe(0);
+    });
+
+    it('reprend le montant réservé quand il tient dans le solde', () => {
+      const withBalance = account({ initialBalance: 500_000 });
+      expect(computeReserved(withBalance, [], REFERENCE, [loanReserving([{ accountId: 'a1', amount: 300_000 }])])).toBe(300_000);
+    });
+
+    it('plafonne à ce qu’il reste après le bloqué réglementaire (jamais compté deux fois)', () => {
+      const withTranche = account({
+        initialBalance: 500_000,
+        lockedTranches: [{ amount: 400_000, unlockDate: '2099-01-01' }],
+      });
+      // 500 000 c de solde, 400 000 c déjà bloqués : il ne reste que 100 000 c, même si 300 000 c sont demandés.
+      expect(computeReserved(withTranche, [], REFERENCE, [loanReserving([{ accountId: 'a1', amount: 300_000 }])])).toBe(100_000);
+    });
+
+    it('vaut 0 si le bloqué réglementaire consomme déjà tout le solde', () => {
+      const fullyLocked = account({
+        initialBalance: 100_000,
+        lockedTranches: [{ amount: 500_000, unlockDate: '2099-01-01' }],
+      });
+      expect(computeReserved(fullyLocked, [], REFERENCE, [loanReserving([{ accountId: 'a1', amount: 50_000 }])])).toBe(0);
+    });
+
+    it('cumule les réservations de plusieurs prêts sur le même compte', () => {
+      const first = loanReserving([{ accountId: 'a1', amount: 100_000 }], 'l1');
+      const second = loanReserving([{ accountId: 'a1', amount: 50_000 }], 'l2');
+      expect(computeReserved(account({ initialBalance: 1_000_000 }), [], REFERENCE, [first, second])).toBe(150_000);
+    });
+  });
+
+  describe('projectAccount avec des prêts', () => {
+    it('réduit le déblocable de chaque point, sans jamais expirer', () => {
+      const loans = [loanReserving([{ accountId: 'a1', amount: 300_000 }])];
+      const { points, currentReserved } = projectAccount(account({ initialBalance: 500_000 }), [], REFERENCE, 60, loans);
+      expect(currentReserved).toBe(300_000);
+      expect(points[0]).toMatchObject({ balance: 500_000, locked: 0, reserved: 300_000, available: 200_000 });
+      expect(points[12]).toMatchObject({ reserved: 300_000 });
+      expect(points[60]).toMatchObject({ reserved: 300_000 }); // toujours là, aucune date de fin
+    });
+
+    it('suit le solde projeté : le déblocable grandit, la réservation reste fixe', () => {
+      const loans = [loanReserving([{ accountId: 'a1', amount: 300_000 }])];
+      const { points } = projectAccount(account({ initialBalance: 500_000, interestRate: 12 }), [], REFERENCE, 2, loans);
+      expect(points[0]).toMatchObject({ balance: 500_000, reserved: 300_000, available: 200_000 });
+      expect(points[1]).toMatchObject({ balance: 505_000, reserved: 300_000, available: 205_000 });
+      expect(points[2]).toMatchObject({ balance: 510_050, reserved: 300_000, available: 210_050 });
+    });
+
+    it('sans prêt (paramètre par défaut), se comporte comme avant', () => {
+      const { points } = projectAccount(account({ initialBalance: 500_000 }), [], REFERENCE, 1);
+      expect(points[0]).toMatchObject({ reserved: 0, available: 500_000 });
+    });
+  });
+
+  describe('projectPortfolio avec des prêts', () => {
+    it('répartit un même prêt sur plusieurs comptes, comme un versement réel scindé en deux', () => {
+      const accounts = [
+        account({ id: 'ldd', name: 'LDD', initialBalance: 800_000 }),
+        account({ id: 'livretA', name: 'Livret A', initialBalance: 600_000 }),
+      ];
+      const loans = [
+        loanReserving([
+          { accountId: 'ldd', amount: 500_000 },
+          { accountId: 'livretA', amount: 300_000 },
+        ]),
+      ];
+      const portfolio = projectPortfolio(accounts, [], REFERENCE, loans);
+
+      expect(portfolio.currentBalance).toBe(1_400_000);
+      expect(portfolio.currentReserved).toBe(800_000);
+      expect(portfolio.currentAvailable).toBe(600_000);
+      expect(portfolio.horizons.every((horizon) => horizon.reserved === 800_000)).toBe(true);
+    });
+
+    it('sans le paramètre prêts, se comporte comme avant (réservé nul)', () => {
+      const portfolio = projectPortfolio([account()], [], REFERENCE);
+      expect(portfolio.currentReserved).toBe(0);
+      expect(portfolio.points.every((point) => point.reserved === 0)).toBe(true);
+    });
   });
 });
 

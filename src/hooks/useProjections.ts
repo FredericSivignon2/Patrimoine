@@ -11,17 +11,18 @@ const HISTORY_MONTHS = 12;
  * épargne nette des 12 derniers mois, tous comptes confondus.
  */
 export function useProjections() {
-  const { accounts, movements } = useFinancial();
+  const { accounts, movements, loans } = useFinancial();
 
   return useMemo(() => {
     const now = new Date();
     const currentMonth = monthKeyOfDate(now);
-    const projection = projectPortfolio(accounts, movements, now);
+    const projection = projectPortfolio(accounts, movements, now, loans);
     return {
       projection,
       hasLockedFunds: projection.points.some((point) => point.locked > 0),
+      hasReservedFunds: projection.points.some((point) => point.reserved > 0),
       unlocks: unlockSchedule(accounts, movements, now),
       history: monthlyNetSeries(movements, addMonths(currentMonth, -(HISTORY_MONTHS - 1)), currentMonth),
     };
-  }, [accounts, movements]);
+  }, [accounts, movements, loans]);
 }

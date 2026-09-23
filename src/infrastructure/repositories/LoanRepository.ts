@@ -14,7 +14,7 @@ export class LoanRepository implements ILoanRepository {
 
   create(input: NewLoan): Promise<Loan> {
     return this.store.mutate((data) => {
-      const loan: Loan = { id: newId(), ...validateLoan(input, data.banks) };
+      const loan: Loan = { id: newId(), ...validateLoan(input, data.banks, data.accounts) };
       return { next: { ...data, loans: [...data.loans, loan] }, result: loan };
     });
   }
@@ -25,7 +25,7 @@ export class LoanRepository implements ILoanRepository {
       if (!existing) throw new NotFoundError(`Prêt introuvable : ${id}`);
       const { id: _id, ...current } = existing;
       // `monthlyInsurance: undefined` dans le patch retire l'assurance.
-      const updated: Loan = { id, ...validateLoan({ ...current, ...patch }, data.banks) };
+      const updated: Loan = { id, ...validateLoan({ ...current, ...patch }, data.banks, data.accounts) };
       return {
         next: { ...data, loans: data.loans.map((loan) => (loan.id === id ? updated : loan)) },
         result: updated,

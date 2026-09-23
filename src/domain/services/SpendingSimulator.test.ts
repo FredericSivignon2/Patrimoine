@@ -8,7 +8,7 @@ import { SIMULATION_DELAYS, simulateSpending } from './SpendingSimulator';
 // 27 550 € déblocables aujourd'hui, puis +500 € par mois ; seuil de sécurité 20 000 €, marge de confort 5 000 €.
 const POINTS: ProjectionPoint[] = Array.from({ length: 61 }, (_, index) => {
   const available = 2_755_000 + index * 50_000;
-  return { month: addMonths('2026-09', index), balance: available, locked: 0, available };
+  return { month: addMonths('2026-09', index), balance: available, locked: 0, reserved: 0, available };
 });
 const SAFETY: SafetySettings = { threshold: 2_000_000, comfortMargin: 500_000 };
 const BUDGETS: Budget[] = [

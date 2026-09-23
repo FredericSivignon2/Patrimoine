@@ -11,7 +11,9 @@ import { LoanForm } from '../components/loans/LoanForm';
 import { LoansSummary } from '../components/loans/LoansSummary';
 import { BankBadge } from '../components/common/bankBadge';
 import { LOAN_KIND_LABELS, LOAN_KINDS, type Loan } from '../domain/models/Loan';
+import { sumCents } from '../domain/services/FinancialMath';
 import { monthKeyOfIso } from '../domain/services/Months';
+import { useAccounts } from '../hooks/useAccounts';
 import { useBanks } from '../hooks/useBanks';
 import { useLoans, type LoanItem } from '../hooks/useLoans';
 
@@ -55,13 +57,33 @@ function PrepaymentNote({ item }: { item: LoanItem }) {
   );
 }
 
+/** Part du prêt encore sur des comptes, pas encore versée à sa destination. */
+function ReservedFundsNote({ loan, accountNames }: { loan: Loan; accountNames: ReadonlyMap<string, string> }) {
+  const reserved = loan.reservedFunds;
+  if (!reserved || reserved.allocations.length === 0) return null;
+
+  const total = sumCents(reserved.allocations.map((allocation) => allocation.amount));
+  const accountLabels = reserved.allocations.map(
+    (allocation) => accountNames.get(allocation.accountId) ?? 'Compte supprimé',
+  );
+  return (
+    <span className="block text-xs text-amber-700">
+      {formatEuros(total)} réservés ({accountLabels.join(', ')})
+      {reserved.since && ` · depuis le ${formatFullDate(reserved.since)}`}
+      {reserved.note && ` · ${reserved.note}`}
+    </span>
+  );
+}
+
 export function LoansPage() {
   const { items, projection, totals, createLoan, updateLoan, removeLoan } = useLoans();
   const { banks } = useBanks();
+  const { accounts } = useAccounts();
   const [editing, setEditing] = useState<Loan | 'new' | null>(null);
   const close = (): void => setEditing(null);
   const loanNames = useMemo(() => new Map(items.map((item) => [item.loan.id, item.loan.name])), [items]);
   const bankNames = useMemo(() => new Map(banks.map((bank) => [bank.id, bank.name])), [banks]);
+  const accountNames = useMemo(() => new Map(accounts.map((account) => [account.id, account.name])), [accounts]);
 
   return (
     <>
@@ -173,6 +195,7 @@ export function LoansPage() {
                             <LoanStatus item={item} />
                           </span>
                           <PrepaymentNote item={item} />
+                          <ReservedFundsNote loan={loan} accountNames={accountNames} />
                         </button>
                       </li>
                     );
@@ -189,6 +212,7 @@ export function LoansPage() {
           <LoanForm
             loan={editing === 'new' ? undefined : editing}
             banks={banks}
+            accounts={accounts}
             onCancel={close}
             onSubmit={async (input) => {
               if (editing === 'new') await createLoan(input);

@@ -16,10 +16,12 @@ import type { SavingsEffortSettings } from './SavingsEffort';
  * Version 7 : banques (`banks`, `Account.bankId`, `Loan.bankId`), tranche bloquée « disponible à la retraite »
  * (`LockedTranche.unlockAtRetirement`), biens immobiliers loués (`properties`).
  * Version 8 : effort d'épargne mensuel (`savingsEffort`) : revenus récurrents et taux cible.
+ * Version 9 : fonds réservés d'un prêt (`Loan.reservedFunds`), versés sur des comptes mais pas encore payés à leur
+ * destination.
  * Les fichiers des versions précédentes restent lisibles ; un client plus ancien refuse un fichier plus récent
  * plutôt que d'en effacer silencieusement les nouveaux champs.
  */
-export const DATA_VERSION = 8;
+export const DATA_VERSION = 9;
 
 /** Contenu du fichier `patrimoine_data.json` (Drive) et du cache local. À traiter comme immuable. */
 export interface PatrimoineData {

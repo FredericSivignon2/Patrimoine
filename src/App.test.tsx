@@ -1040,6 +1040,130 @@ describe('Prêts', () => {
       expect(app.dialog.getByText(/n’est pas déduit de vos comptes/i)).toBeInTheDocument();
     });
   });
+
+  describe('fonds réservés', () => {
+    const RESERVED_LOAN: Loan = {
+      id: 'travaux',
+      name: 'Prêt conso travaux',
+      kind: 'CONSUMER',
+      principal: 800_000,
+      annualRate: 4.9,
+      monthlyPayment: 19_000,
+      firstPaymentDate: nextMonthDate('25'),
+      reservedFunds: {
+        note: 'À verser à l’artisan',
+        since: '2026-01-10',
+        allocations: [
+          { accountId: 'a1', amount: 50_000 },
+          { accountId: 'a2', amount: 2_000 },
+        ],
+      },
+    };
+
+    it('affiche les fonds réservés sur la bannière du tableau de bord et sur les comptes concernés', async () => {
+      await renderApp('/', withLoans([RESERVED_LOAN]));
+
+      expect(screen.getByText(/dont 520,00.*réservés pour un ou plusieurs prêts en cours/i)).toBeInTheDocument();
+
+      const checking = within(screen.getByRole('region', { name: 'Comptes courants' }));
+      expect(checking.getByText(euros('500,00 € réservés'))).toBeInTheDocument();
+      const savings = within(screen.getByRole('region', { name: 'Épargne' }));
+      expect(savings.getByText(euros('20,00 € réservés'))).toBeInTheDocument();
+    });
+
+    it('montre les fonds réservés et le déblocable restant sur la page Comptes', async () => {
+      await renderApp('/comptes', withLoans([RESERVED_LOAN]));
+      const livret = within(screen.getByRole('button', { name: /livret a/i }));
+      expect(livret.getByText(euros('20,00 € réservés · 30,00 € déblocables'))).toBeInTheDocument();
+    });
+
+    it('indique les fonds réservés sur la carte du prêt, avec les comptes, la date et la destination', async () => {
+      await renderApp('/prets', withLoans([RESERVED_LOAN]));
+      const card = cardOf(/prêt conso travaux/i);
+      expect(card.getByText(/520,00.*réservés \(Compte courant, Livret A\)/i)).toBeInTheDocument();
+      expect(card.getByText(/à verser à l’artisan/i)).toBeInTheDocument();
+    });
+
+    it('crée un prêt avec des fonds réservés sur un compte', async () => {
+      const { storage, user } = await renderApp('/prets', seeded());
+
+      await user.click(screen.getByRole('button', { name: /nouveau prêt/i }));
+      const dialog = within(await screen.findByRole('dialog', { name: /nouveau prêt/i }));
+      await user.type(dialog.getByLabelText(/nom du prêt/i), 'Prêt conso travaux');
+      await user.type(dialog.getByLabelText(/capital restant dû/i), '8000');
+      await user.type(dialog.getByLabelText(/taux annuel/i), '4,9');
+      await user.type(dialog.getByLabelText(/mensualité \(hors assurance\)/i), '190');
+
+      await user.type(dialog.getByLabelText(/destination/i), 'À verser à l’artisan');
+      fireEvent.change(dialog.getByLabelText(/réservé depuis le/i), { target: { value: '2026-01-10' } });
+      await user.click(dialog.getByRole('button', { name: /ajouter un compte/i }));
+      await user.selectOptions(dialog.getByLabelText('Compte'), 'a1');
+      await user.type(dialog.getByLabelText(/montant réservé/i), '500');
+      expect(dialog.getByText(/total réservé : 500,00/i)).toBeInTheDocument();
+
+      await user.click(dialog.getByRole('button', { name: 'Enregistrer' }));
+
+      expect(storage.stored?.loans[0].reservedFunds).toEqual({
+        note: 'À verser à l’artisan',
+        since: '2026-01-10',
+        allocations: [{ accountId: 'a1', amount: 50_000 }],
+      });
+      expect(await cardOf(/prêt conso travaux/i).findByText(/500,00.*réservés \(Compte courant\)/i)).toBeInTheDocument();
+    });
+
+    it('prérempli les fonds réservés existants et permet de les retirer', async () => {
+      const { storage, user } = await renderApp('/prets', withLoans([RESERVED_LOAN]));
+
+      await user.click(screen.getByRole('button', { name: /prêt conso travaux/i }));
+      const dialog = within(await screen.findByRole('dialog', { name: /modifier le prêt/i }));
+      expect(dialog.getByLabelText(/destination/i)).toHaveValue('À verser à l’artisan');
+      expect(dialog.getByLabelText(/réservé depuis le/i)).toHaveValue('2026-01-10');
+      const amounts = dialog.getAllByLabelText(/montant réservé/i);
+      expect(amounts.map((input) => (input as HTMLInputElement).value)).toEqual(['500,00', '20,00']);
+
+      await user.click(dialog.getByRole('button', { name: /retirer le compte 1 des fonds réservés/i }));
+      await user.click(dialog.getByRole('button', { name: /retirer le compte 1 des fonds réservés/i }));
+      await user.click(dialog.getByRole('button', { name: 'Enregistrer' }));
+
+      expect(storage.stored?.loans[0]).not.toHaveProperty('reservedFunds');
+    });
+
+    it('refuse une ligne de fonds réservés incomplète, puis un compte utilisé deux fois', async () => {
+      const { storage, user } = await renderApp('/prets', seeded());
+      await user.click(screen.getByRole('button', { name: /nouveau prêt/i }));
+      const dialog = within(await screen.findByRole('dialog', { name: /nouveau prêt/i }));
+      await user.type(dialog.getByLabelText(/nom du prêt/i), 'Prêt conso');
+      await user.type(dialog.getByLabelText(/capital restant dû/i), '8000');
+      await user.type(dialog.getByLabelText(/taux annuel/i), '4,9');
+      await user.type(dialog.getByLabelText(/mensualité \(hors assurance\)/i), '190');
+
+      await user.click(dialog.getByRole('button', { name: /ajouter un compte/i }));
+      await user.selectOptions(dialog.getByLabelText('Compte'), 'a1');
+      const saves = 0;
+      await user.click(dialog.getByRole('button', { name: 'Enregistrer' }));
+      expect(await dialog.findByRole('alert')).toHaveTextContent(/fonds réservés 1 : choisissez un compte et un montant positif/i);
+      expect(storage.saveCount).toBe(saves);
+
+      await user.type(dialog.getByLabelText(/montant réservé/i), '500');
+      await user.click(dialog.getByRole('button', { name: /ajouter un compte/i }));
+      await user.selectOptions(dialog.getAllByLabelText('Compte')[1], 'a1');
+      await user.type(dialog.getAllByLabelText(/montant réservé/i)[1], '100');
+      await user.click(dialog.getByRole('button', { name: 'Enregistrer' }));
+      expect(await dialog.findByRole('alert')).toHaveTextContent(/fonds réservés 2 : ce compte est déjà utilisé pour ce prêt/i);
+      expect(storage.saveCount).toBe(saves);
+    });
+
+    it('détache l’allocation d’un compte réservé quand ce compte est supprimé', async () => {
+      const { storage, user } = await renderApp('/comptes', withLoans([RESERVED_LOAN]));
+
+      await user.click(screen.getByRole('button', { name: /livret a/i }));
+      const dialog = within(await screen.findByRole('dialog', { name: /modifier le compte/i }));
+      await user.click(dialog.getByRole('button', { name: 'Supprimer le compte' }));
+      await user.click(dialog.getByRole('button', { name: 'Confirmer la suppression' }));
+
+      expect(storage.stored?.loans[0].reservedFunds?.allocations).toEqual([{ accountId: 'a1', amount: 50_000 }]);
+    });
+  });
 });
 
 describe('Retraits rattachés à un poste', () => {

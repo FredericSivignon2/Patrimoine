@@ -10,6 +10,7 @@ import {
   outstandingAt,
   paymentForTerm,
   projectLoans,
+  reservedLotsOf,
 } from './LoanEngine';
 
 // 21 septembre 2026
@@ -177,6 +178,34 @@ describe('remboursements anticipés', () => {
 
   it('reste complet même si tous les remboursements sont ignorés ou nuls', () => {
     expect(withPrepayments([]).complete).toBe(true);
+  });
+});
+
+describe('reservedLotsOf', () => {
+  it('est vide sans prêt, ou si aucun prêt n’a de fonds réservés', () => {
+    expect(reservedLotsOf('a1', [])).toEqual([]);
+    expect(reservedLotsOf('a1', [loan()])).toEqual([]);
+  });
+
+  it('ne renvoie que les allocations du compte demandé, sans date de fin', () => {
+    const withReservation = loan({
+      reservedFunds: {
+        note: 'À verser à l’artisan',
+        allocations: [
+          { accountId: 'a1', amount: 300_000 },
+          { accountId: 'a2', amount: 200_000 },
+        ],
+      },
+    });
+    expect(reservedLotsOf('a1', [withReservation])).toEqual([{ amount: 300_000 }]);
+    expect(reservedLotsOf('a2', [withReservation])).toEqual([{ amount: 200_000 }]);
+    expect(reservedLotsOf('a3', [withReservation])).toEqual([]);
+  });
+
+  it('cumule les allocations de plusieurs prêts pour le même compte', () => {
+    const first = loan({ id: 'l1', reservedFunds: { allocations: [{ accountId: 'a1', amount: 100_000 }] } });
+    const second = loan({ id: 'l2', reservedFunds: { allocations: [{ accountId: 'a1', amount: 50_000 }] } });
+    expect(reservedLotsOf('a1', [first, second])).toEqual([{ amount: 100_000 }, { amount: 50_000 }]);
   });
 });
 

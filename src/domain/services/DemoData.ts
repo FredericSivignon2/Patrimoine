@@ -136,6 +136,16 @@ export function createDemoData(referenceDate: Date = new Date()): PatrimoineData
       monthlyPayment: 19_000,
       firstPaymentDate: `${currentMonth}-25`,
       prepayments: [{ date: `${addMonths(currentMonth, 6)}-25`, amount: 300_000, effect: 'DURATION' }],
+      // Versé sur deux comptes à la signature, mais les travaux ne sont pas finis : à ne pas compter comme déblocable.
+      // Montant volontairement modeste : garde la bannière de sécurité de la démo sur « confortable ».
+      reservedFunds: {
+        note: 'À verser à l’artisan à la fin des travaux',
+        since: `${addMonths(currentMonth, -3)}-10`,
+        allocations: [
+          { accountId: livret.id, amount: 100_000 },
+          { accountId: assuranceVie.id, amount: 50_000 },
+        ],
+      },
     },
   ];
 

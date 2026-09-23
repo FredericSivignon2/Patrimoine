@@ -22,6 +22,14 @@ export const formatPercent = (value: number): string => `${percent.format(value)
 export const formatCount = (count: number, singular: string, plural = `${singular}s`): string =>
   `${count} ${count > 1 ? plural : singular}`;
 
+/** « X bloqués », « Y réservés » (montants nuls omis) : le détail d'un compte dont une part n'est pas déblocable. */
+export function lockedSegments(locked: number, reserved: number): string[] {
+  const segments: string[] = [];
+  if (locked > 0) segments.push(`${formatEuros(locked)} bloqués`);
+  if (reserved > 0) segments.push(`${formatEuros(reserved)} réservés`);
+  return segments;
+}
+
 function dateOf(year: number, month: number, day = 1): Date {
   return new Date(year, month - 1, day);
 }

@@ -1,4 +1,5 @@
 import type { Account } from '../models/Account';
+import type { Loan } from '../models/Loan';
 import type { Movement } from '../models/Movement';
 import {
   MAX_PROJECTION_MONTHS,
@@ -11,7 +12,10 @@ import {
 } from '../models/Projection';
 import { monthlyInterest, sumCents, type Cents } from './FinancialMath';
 import { lockedAmountAt, lockLotsOf, type LockLot } from './LockEngine';
+import { reservedLotsOf } from './LoanEngine';
 import { addMonths, addYears, lastDayOfMonth, monthKeyOfDate, monthKeyOfIso, monthRange, toIsoDate } from './Months';
+
+const NO_LOANS: readonly Loan[] = [];
 
 /** Nombre de mois complets pris en compte pour la moyenne mensuelle constatée. */
 export const DEFAULT_LOOKBACK_MONTHS = 12;
@@ -30,6 +34,22 @@ export function computeBalance(account: Account, movements: readonly Movement[])
 export function computeLocked(account: Account, movements: readonly Movement[], referenceDate: Date): Cents {
   const own = movements.filter((movement) => movement.accountId === account.id);
   return lockedAmountAt(lockLotsOf(account, own), toIsoDate(referenceDate), computeBalance(account, own));
+}
+
+/**
+ * Montant réservé aujourd'hui pour un ou plusieurs prêts (versé mais pas encore payé à sa destination), plafonné à
+ * ce qu'il reste sur le compte une fois le bloqué réglementaire déjà compté (jamais les deux sur la même part).
+ */
+export function computeReserved(
+  account: Account,
+  movements: readonly Movement[],
+  referenceDate: Date,
+  loans: readonly Loan[],
+): Cents {
+  const own = movements.filter((movement) => movement.accountId === account.id);
+  const locked = computeLocked(account, movements, referenceDate);
+  const ceiling = Math.max(0, computeBalance(account, own) - locked);
+  return lockedAmountAt(reservedLotsOf(account.id, loans), toIsoDate(referenceDate), ceiling);
 }
 
 /** Versements, retraits et net pour chaque mois de `fromMonth` à `toMonth` inclus (mois sans mouvement à zéro). */
@@ -109,13 +129,16 @@ interface FutureLot extends LockLot {
 /**
  * Projection d'un compte. La part bloquée de chaque point tient compte des lots existants (stock saisi et versements
  * passés), et, si le compte bloque ses versements, des versements mensuels projetés, eux aussi bloqués N ans.
- * Les intérêts sont considérés comme disponibles. Le point 0 est évalué aujourd'hui, les suivants en fin de mois.
+ * La part réservée (`loans`) n'a pas de date de fin : elle reste identique à chaque point tant qu'elle n'est pas
+ * retirée du prêt, plafonnée à ce qu'il reste une fois le bloqué compté. Les intérêts sont considérés comme
+ * disponibles. Le point 0 est évalué aujourd'hui, les suivants en fin de mois.
  */
 export function projectAccount(
   account: Account,
   movements: readonly Movement[],
   referenceDate: Date,
   months: number = MAX_PROJECTION_MONTHS,
+  loans: readonly Loan[] = NO_LOANS,
 ): AccountProjection {
   const ownMovements = movements.filter((movement) => movement.accountId === account.id);
   const currentBalance = computeBalance(account, ownMovements);
@@ -140,16 +163,27 @@ export function projectAccount(
           unlockDate: addYears(lastDayOfMonth(addMonths(startMonth, index + 1)), lockYears),
         }))
       : [];
+  const reservedLots = reservedLotsOf(account.id, loans);
 
   const today = toIsoDate(referenceDate);
   const points: ProjectionPoint[] = balances.map((balance, index) => {
     const month = addMonths(startMonth, index);
+    const asOf = index === 0 ? today : lastDayOfMonth(month);
     const lots = [...existingLots, ...futureLots.filter((lot) => lot.createdAt <= index)];
-    const locked = lockedAmountAt(lots, index === 0 ? today : lastDayOfMonth(month), balance);
-    return { month, balance, locked, available: balance - locked };
+    const locked = lockedAmountAt(lots, asOf, balance);
+    const reserved = lockedAmountAt(reservedLots, asOf, Math.max(0, balance - locked));
+    return { month, balance, locked, reserved, available: balance - locked - reserved };
   });
 
-  return { accountId: account.id, currentBalance, currentLocked: points[0].locked, monthlyContribution, annualRate, points };
+  return {
+    accountId: account.id,
+    currentBalance,
+    currentLocked: points[0].locked,
+    currentReserved: points[0].reserved,
+    monthlyContribution,
+    annualRate,
+    points,
+  };
 }
 
 /** Projection du patrimoine : somme des projections de chaque compte (chacun avec sa moyenne et son taux). */
@@ -157,19 +191,22 @@ export function projectPortfolio(
   accounts: readonly Account[],
   movements: readonly Movement[],
   referenceDate: Date,
+  loans: readonly Loan[] = NO_LOANS,
 ): PortfolioProjection {
-  const projections = accounts.map((account) => projectAccount(account, movements, referenceDate));
+  const projections = accounts.map((account) => projectAccount(account, movements, referenceDate, MAX_PROJECTION_MONTHS, loans));
   const startMonth = monthKeyOfDate(referenceDate);
 
   const points: ProjectionPoint[] = Array.from({ length: MAX_PROJECTION_MONTHS + 1 }, (_, index) => {
     const balance = sumCents(projections.map((projection) => projection.points[index].balance));
     const locked = sumCents(projections.map((projection) => projection.points[index].locked));
-    return { month: addMonths(startMonth, index), balance, locked, available: balance - locked };
+    const reserved = sumCents(projections.map((projection) => projection.points[index].reserved));
+    return { month: addMonths(startMonth, index), balance, locked, reserved, available: balance - locked - reserved };
   });
 
   return {
     currentBalance: points[0].balance,
     currentLocked: points[0].locked,
+    currentReserved: points[0].reserved,
     currentAvailable: points[0].available,
     monthlyContribution: sumCents(projections.map((projection) => projection.monthlyContribution)),
     points,
@@ -177,6 +214,7 @@ export function projectPortfolio(
       months,
       balance: points[months].balance,
       locked: points[months].locked,
+      reserved: points[months].reserved,
       available: points[months].available,
     })),
     accounts: projections,

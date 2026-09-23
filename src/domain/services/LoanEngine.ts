@@ -2,7 +2,21 @@ import { BUDGET_HORIZONS, type BudgetHorizon } from '../models/Budget';
 import { MAX_LOAN_MONTHS, type Loan } from '../models/Loan';
 import { MAX_PROJECTION_MONTHS, type MonthKey } from '../models/Projection';
 import { monthlyInterest, sumCents, type Cents } from './FinancialMath';
+import type { LockLot } from './LockEngine';
 import { addMonths, addMonthsToDate, lastDayOfMonth, monthKeyOfDate, monthKeyOfIso, toIsoDate } from './Months';
+
+/**
+ * Lots réservés sur un compte, tous prêts confondus : la part de leur capital versée mais pas encore payée à sa
+ * destination. Comme une tranche « disponible à la retraite », sans date de fin : toujours compté comme non
+ * disponible jusqu'à ce que l'allocation soit retirée du prêt.
+ */
+export function reservedLotsOf(accountId: string, loans: readonly Loan[]): LockLot[] {
+  return loans.flatMap((loan) =>
+    (loan.reservedFunds?.allocations ?? [])
+      .filter((allocation) => allocation.accountId === accountId)
+      .map((allocation): LockLot => ({ amount: allocation.amount })),
+  );
+}
 
 export type LoanTerms = Pick<
   Loan,

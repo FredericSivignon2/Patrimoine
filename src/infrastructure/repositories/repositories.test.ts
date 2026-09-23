@@ -609,6 +609,137 @@ describe('LoanRepository', () => {
       expect(loan.prepayments).toHaveLength(1);
     });
   });
+
+  describe('fonds réservés', () => {
+    const conso: NewLoan = {
+      name: 'Prêt conso travaux',
+      kind: 'CONSUMER',
+      principal: 1_400_000,
+      annualRate: 0,
+      monthlyPayment: 100_000,
+      firstPaymentDate: '2026-10-25',
+    };
+
+    it('enregistre des fonds réservés répartis sur plusieurs comptes, avec note et date', async () => {
+      const ldd = await accounts.create({ name: 'LDD', type: 'SAVINGS', initialBalance: 800_000 });
+      const livretA = await accounts.create({ name: 'Livret A', type: 'SAVINGS', initialBalance: 600_000 });
+      const loan = await loans.create({
+        ...conso,
+        reservedFunds: {
+          note: '  À verser à l’artisan  ',
+          since: '2026-06-10',
+          allocations: [
+            { accountId: ldd.id, amount: 500_000 },
+            { accountId: livretA.id, amount: 300_000 },
+          ],
+        },
+      });
+
+      expect(loan.reservedFunds).toEqual({
+        note: 'À verser à l’artisan',
+        since: '2026-06-10',
+        allocations: [
+          { accountId: ldd.id, amount: 500_000 },
+          { accountId: livretA.id, amount: 300_000 },
+        ],
+      });
+      expect(driver.stored?.loans[0].reservedFunds).toEqual(loan.reservedFunds);
+    });
+
+    it('accepte des fonds réservés sans note ni date', async () => {
+      const account = await accounts.create({ name: 'Livret A', type: 'SAVINGS', initialBalance: 600_000 });
+      const loan = await loans.create({ ...conso, reservedFunds: { allocations: [{ accountId: account.id, amount: 100_000 }] } });
+      expect(loan.reservedFunds).toEqual({ allocations: [{ accountId: account.id, amount: 100_000 }] });
+    });
+
+    it('n’écrit pas de fonds réservés sans allocation', async () => {
+      const loan = await loans.create({ ...conso, reservedFunds: { note: 'Rien à réserver', allocations: [] } });
+      expect('reservedFunds' in loan).toBe(false);
+    });
+
+    it('refuse un compte introuvable', async () => {
+      await expect(
+        loans.create({ ...conso, reservedFunds: { allocations: [{ accountId: 'inconnu', amount: 100_000 }] } }),
+      ).rejects.toBeInstanceOf(ValidationError);
+    });
+
+    it('refuse un compte répété dans le même prêt', async () => {
+      const account = await accounts.create({ name: 'Livret A', type: 'SAVINGS', initialBalance: 600_000 });
+      await expect(
+        loans.create({
+          ...conso,
+          reservedFunds: {
+            allocations: [
+              { accountId: account.id, amount: 100_000 },
+              { accountId: account.id, amount: 50_000 },
+            ],
+          },
+        }),
+      ).rejects.toBeInstanceOf(ValidationError);
+    });
+
+    it.each([
+      ['un montant nul', 0],
+      ['un montant décimal', 10.5],
+      ['un montant négatif', -100],
+    ])('refuse %s', async (_label, amount) => {
+      const account = await accounts.create({ name: 'Livret A', type: 'SAVINGS', initialBalance: 600_000 });
+      await expect(
+        loans.create({ ...conso, reservedFunds: { allocations: [{ accountId: account.id, amount }] } }),
+      ).rejects.toBeInstanceOf(ValidationError);
+    });
+
+    it('refuse une date de réservation invalide', async () => {
+      const account = await accounts.create({ name: 'Livret A', type: 'SAVINGS', initialBalance: 600_000 });
+      await expect(
+        loans.create({
+          ...conso,
+          reservedFunds: { since: '2026-02-30', allocations: [{ accountId: account.id, amount: 100_000 }] },
+        }),
+      ).rejects.toBeInstanceOf(ValidationError);
+    });
+
+    it('modifie puis retire les fonds réservés', async () => {
+      const account = await accounts.create({ name: 'Livret A', type: 'SAVINGS', initialBalance: 600_000 });
+      const loan = await loans.create({ ...conso, reservedFunds: { allocations: [{ accountId: account.id, amount: 100_000 }] } });
+
+      const updated = await loans.update(loan.id, {
+        reservedFunds: { allocations: [{ accountId: account.id, amount: 40_000 }] },
+      });
+      expect(updated.reservedFunds?.allocations).toEqual([{ accountId: account.id, amount: 40_000 }]);
+
+      const cleared = await loans.update(loan.id, { reservedFunds: { allocations: [] } });
+      expect('reservedFunds' in cleared).toBe(false);
+    });
+
+    it('détache l’allocation d’un compte supprimé, sans toucher aux autres', async () => {
+      const ldd = await accounts.create({ name: 'LDD', type: 'SAVINGS', initialBalance: 800_000 });
+      const livretA = await accounts.create({ name: 'Livret A', type: 'SAVINGS', initialBalance: 600_000 });
+      await loans.create({
+        ...conso,
+        reservedFunds: {
+          allocations: [
+            { accountId: ldd.id, amount: 500_000 },
+            { accountId: livretA.id, amount: 300_000 },
+          ],
+        },
+      });
+
+      await accounts.remove(ldd.id);
+
+      const remaining = (await loans.list())[0];
+      expect(remaining.reservedFunds?.allocations).toEqual([{ accountId: livretA.id, amount: 300_000 }]);
+    });
+
+    it('retire tous les fonds réservés quand le dernier compte concerné est supprimé', async () => {
+      const account = await accounts.create({ name: 'Livret A', type: 'SAVINGS', initialBalance: 600_000 });
+      await loans.create({ ...conso, reservedFunds: { allocations: [{ accountId: account.id, amount: 100_000 }] } });
+
+      await accounts.remove(account.id);
+
+      expect((await loans.list())[0]).not.toHaveProperty('reservedFunds');
+    });
+  });
 });
 
 describe('BankRepository', () => {

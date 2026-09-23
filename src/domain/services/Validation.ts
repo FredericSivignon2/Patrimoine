@@ -14,6 +14,8 @@ import {
   PREPAYMENT_EFFECTS,
   type Loan,
   type LoanPrepayment,
+  type LoanReservedAllocation,
+  type LoanReservedFunds,
   type NewLoan,
 } from '../models/Loan';
 import type { MovementType, NewMovement } from '../models/Movement';
@@ -138,7 +140,46 @@ function validatePrepayments(prepayments: readonly LoanPrepayment[] | undefined)
     .sort((a, b) => a.date.localeCompare(b.date));
 }
 
-export function validateLoan(input: NewLoan, banks: readonly Bank[] = []): NewLoan {
+function validateReservedAllocation(
+  input: LoanReservedAllocation,
+  accounts: readonly Account[],
+  others: readonly LoanReservedAllocation[],
+): LoanReservedAllocation {
+  if (!accounts.some((account) => account.id === input.accountId)) {
+    throw new ValidationError('Le compte des fonds réservés est introuvable.');
+  }
+  if (others.some((other) => other.accountId === input.accountId)) {
+    throw new ValidationError('Un compte ne peut apparaître qu’une fois dans les fonds réservés d’un prêt.');
+  }
+  if (!Number.isSafeInteger(input.amount) || input.amount <= 0) {
+    throw new ValidationError('Le montant réservé doit être strictement positif.');
+  }
+  return { accountId: input.accountId, amount: input.amount };
+}
+
+/** `undefined` si les allocations sont vides : pas de fonds réservés sans compte pour les recevoir. */
+function validateReservedFunds(
+  input: LoanReservedFunds | undefined,
+  accounts: readonly Account[],
+): LoanReservedFunds | undefined {
+  if (!input) return undefined;
+  const allocations: LoanReservedAllocation[] = [];
+  for (const allocation of input.allocations) {
+    allocations.push(validateReservedAllocation(allocation, accounts, allocations));
+  }
+  if (allocations.length === 0) return undefined;
+
+  const reserved: LoanReservedFunds = { allocations };
+  const note = input.note?.trim();
+  if (note) reserved.note = note;
+  if (input.since !== undefined && input.since !== '') {
+    if (!isValidIsoDate(input.since)) throw new ValidationError('La date de réservation est invalide.');
+    reserved.since = input.since;
+  }
+  return reserved;
+}
+
+export function validateLoan(input: NewLoan, banks: readonly Bank[] = [], accounts: readonly Account[] = []): NewLoan {
   const name = input.name.trim();
   if (name === '') throw new ValidationError('Le nom du prêt est obligatoire.');
   if (!LOAN_KINDS.includes(input.kind)) throw new ValidationError('Type de prêt invalide.');
@@ -169,6 +210,8 @@ export function validateLoan(input: NewLoan, banks: readonly Bank[] = []): NewLo
   if (prepayments.length > 0) loan.prepayments = prepayments;
   const bankId = validateBankId(input.bankId, banks);
   if (bankId !== undefined) loan.bankId = bankId;
+  const reservedFunds = validateReservedFunds(input.reservedFunds, accounts);
+  if (reservedFunds) loan.reservedFunds = reservedFunds;
 
   const { rows, complete } = buildAmortization(loan);
   if (!complete) {

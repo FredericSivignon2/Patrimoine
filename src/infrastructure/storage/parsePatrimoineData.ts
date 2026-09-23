@@ -8,6 +8,8 @@ import {
   type Loan,
   type LoanKind,
   type LoanPrepayment,
+  type LoanReservedAllocation,
+  type LoanReservedFunds,
   type PrepaymentEffect,
 } from '../../domain/models/Loan';
 import type { Movement } from '../../domain/models/Movement';
@@ -126,11 +128,53 @@ function parsePrepayment(raw: unknown, where: string): LoanPrepayment {
   return { date, amount, effect };
 }
 
+function parseReservedAllocation(raw: unknown, where: string): LoanReservedAllocation {
+  if (!isRecord(raw)) throw new InvalidDataError(`${where} : objet attendu.`);
+  const { accountId, amount } = raw;
+  if (typeof accountId !== 'string' || accountId === '') throw new InvalidDataError(`${where} : compte invalide.`);
+  if (typeof amount !== 'number' || !Number.isSafeInteger(amount) || amount <= 0) {
+    throw new InvalidDataError(`${where} : montant invalide (centimes entiers positifs attendus).`);
+  }
+  return { accountId, amount };
+}
+
+function parseReservedFunds(raw: unknown, where: string): LoanReservedFunds {
+  if (!isRecord(raw)) throw new InvalidDataError(`${where} : objet attendu.`);
+  const { note, since, allocations } = raw;
+  if (!isUnknownArray(allocations)) throw new InvalidDataError(`${where} : allocations invalides.`);
+
+  const reserved: LoanReservedFunds = {
+    allocations: allocations.map((allocation, allocationIndex) =>
+      parseReservedAllocation(allocation, `${where}.allocations[${allocationIndex}]`),
+    ),
+  };
+  if (isPresent(note)) {
+    if (typeof note !== 'string') throw new InvalidDataError(`${where} : note invalide.`);
+    reserved.note = note;
+  }
+  if (isPresent(since)) {
+    if (typeof since !== 'string' || !isValidIsoDate(since)) throw new InvalidDataError(`${where} : date invalide.`);
+    reserved.since = since;
+  }
+  return reserved;
+}
+
 function parseLoan(raw: unknown, index: number): Loan {
   const where = `prêts[${index}]`;
   if (!isRecord(raw)) throw new InvalidDataError(`${where} : objet attendu.`);
-  const { id, name, kind, principal, annualRate, monthlyPayment, monthlyInsurance, firstPaymentDate, prepayments, bankId } =
-    raw;
+  const {
+    id,
+    name,
+    kind,
+    principal,
+    annualRate,
+    monthlyPayment,
+    monthlyInsurance,
+    firstPaymentDate,
+    prepayments,
+    bankId,
+    reservedFunds,
+  } = raw;
   if (typeof id !== 'string' || id === '') throw new InvalidDataError(`${where} : identifiant manquant.`);
   if (typeof name !== 'string') throw new InvalidDataError(`${where} : nom invalide.`);
   if (!isLoanKind(kind)) throw new InvalidDataError(`${where} : type invalide.`);
@@ -162,6 +206,9 @@ function parseLoan(raw: unknown, index: number): Loan {
   }
   const loanBankId = parseBankId(bankId, where);
   if (loanBankId !== undefined) loan.bankId = loanBankId;
+  if (isPresent(reservedFunds)) {
+    loan.reservedFunds = parseReservedFunds(reservedFunds, `${where}.fondsRéservés`);
+  }
   if (!buildAmortization(loan).complete) {
     throw new InvalidDataError(`${where} : l'échéancier ne se termine pas (mensualité trop faible ou durée excessive).`);
   }

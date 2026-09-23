@@ -7,7 +7,7 @@ import { Button, buttonClasses } from '../components/common/Button';
 import { Card } from '../components/common/Card';
 import { EmptyState } from '../components/common/EmptyState';
 import { BudgetsSummaryCard } from '../components/budgets/BudgetsSummaryCard';
-import { formatEuros, formatPercent, formatSignedEuros } from '../components/common/format';
+import { formatEuros, formatPercent, formatSignedEuros, lockedSegments } from '../components/common/format';
 import { PatrimoineHero } from '../components/dashboard/PatrimoineHero';
 import { LoansSummaryCard } from '../components/dashboard/LoansSummaryCard';
 import { SafetyDialog } from '../components/dashboard/SafetyDialog';
@@ -16,6 +16,7 @@ import { SpendSimulator } from '../components/dashboard/SpendSimulator';
 import { UnlockScheduleCard } from '../components/dashboard/UnlockScheduleCard';
 import { useFinancial } from '../context/FinancialContext';
 import type { AccountType } from '../domain/models/Account';
+import { sumCents } from '../domain/services/FinancialMath';
 import { useAccounts } from '../hooks/useAccounts';
 import { useBudgets } from '../hooks/useBudgets';
 import { useLoans } from '../hooks/useLoans';
@@ -32,11 +33,11 @@ const GROUPS: readonly { type: AccountType; title: string }[] = [
 ];
 
 export function DashboardPage() {
-  const { accounts, balances, locked, totals } = useAccounts();
-  const { projection, hasLockedFunds, unlocks, history } = useProjections();
+  const { accounts, balances, locked, reserved, totals } = useAccounts();
+  const { projection, hasLockedFunds, hasReservedFunds, unlocks, history } = useProjections();
   const { settings, status } = useSafety(projection.currentAvailable);
   const { budgets, plan, spent, hasSafety, objectivesSummary } = useBudgets();
-  const { items: loanItems, totals: loanTotals } = useLoans();
+  const { loans, items: loanItems, totals: loanTotals } = useLoans();
   const { items: propertyItems, totalCushion } = useProperties();
   const { report: effortReport } = useSavingsEffort();
   const { loadDemoData } = useFinancial();
@@ -45,6 +46,17 @@ export function DashboardPage() {
   const propertyBreakdown = useMemo(
     () => propertyItems.map((item) => `${item.name} : ${formatEuros(item.cushion)}`).join(' · '),
     [propertyItems],
+  );
+  const reservedBreakdown = useMemo(
+    () =>
+      loans
+        .filter((loan) => loan.reservedFunds && loan.reservedFunds.allocations.length > 0)
+        .map((loan) => {
+          const amount = sumCents(loan.reservedFunds?.allocations.map((allocation) => allocation.amount) ?? []);
+          return `${loan.name} : ${formatEuros(amount)}`;
+        })
+        .join(' · '),
+    [loans],
   );
 
   const allocation = useMemo(
@@ -81,6 +93,8 @@ export function DashboardPage() {
         monthlyContribution={projection.monthlyContribution}
         status={status}
         onEditSafety={() => setEditingSafety(true)}
+        reserved={projection.currentReserved}
+        reservedBreakdown={reservedBreakdown}
         propertyCushion={totalCushion}
         propertyBreakdown={propertyBreakdown}
       />
@@ -109,7 +123,7 @@ export function DashboardPage() {
               </p>
               <p className="mt-1 text-lg font-bold tabular-nums text-slate-900">{formatEuros(horizon.balance)}</p>
               <p className={`text-xs font-semibold tabular-nums ${deltaTone(gain)}`}>{formatSignedEuros(gain)}</p>
-              {hasLockedFunds && (
+              {(hasLockedFunds || hasReservedFunds) && (
                 <p className="mt-2 border-t border-slate-100 pt-2 text-xs text-slate-500">
                   Déblocable :{' '}
                   <span className="font-semibold tabular-nums text-slate-700">{formatEuros(horizon.available)}</span>
@@ -169,16 +183,18 @@ export function DashboardPage() {
                   {group.map((account) => {
                     const balance = balances.get(account.id) ?? 0;
                     const lockedAmount = locked.get(account.id) ?? 0;
+                    const reservedAmount = reserved.get(account.id) ?? 0;
+                    const segments = lockedSegments(lockedAmount, reservedAmount);
                     return (
                       <li key={account.id} className="flex items-center justify-between gap-3 py-3">
                         <span className="min-w-0">
                           <span className="block truncate font-medium text-slate-900">{account.name}</span>
-                          {(account.interestRate !== undefined || lockedAmount > 0) && (
+                          {(account.interestRate !== undefined || segments.length > 0) && (
                             <span className="block text-xs text-slate-500">
                               {account.interestRate !== undefined && `${formatPercent(account.interestRate)} / an`}
-                              {account.interestRate !== undefined && lockedAmount > 0 && ' · '}
-                              {lockedAmount > 0 && (
-                                <span className="font-medium text-amber-700">{formatEuros(lockedAmount)} bloqués</span>
+                              {account.interestRate !== undefined && segments.length > 0 && ' · '}
+                              {segments.length > 0 && (
+                                <span className="font-medium text-amber-700">{segments.join(' · ')}</span>
                               )}
                             </span>
                           )}

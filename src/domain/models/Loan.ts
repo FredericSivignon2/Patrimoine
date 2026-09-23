@@ -53,6 +53,28 @@ export interface Loan {
   prepayments?: LoanPrepayment[];
   /** Banque prêteuse (facultatif). */
   bankId?: string;
+  /**
+   * Part du capital déjà versée sur des comptes mais pas encore payée à sa destination finale (ex. un artisan) :
+   * à ne surtout pas compter comme déblocable ni dépensable tant qu'elle n'est pas réglée. Sans date de fin : à
+   * retirer manuellement du prêt une fois le paiement fait (voir `reservedLotsOf`).
+   */
+  reservedFunds?: LoanReservedFunds;
+}
+
+/** Montant d'un prêt encore présent sur un compte, en attente d'être versé à sa destination. */
+export interface LoanReservedAllocation {
+  accountId: string;
+  /** Centimes (> 0), plafonné au solde du compte au moment du calcul. */
+  amount: number;
+}
+
+export interface LoanReservedFunds {
+  /** Destination du versement à venir (ex. « À verser à l'artisan »). */
+  note?: string;
+  /** Date de départ de la réservation (`YYYY-MM-DD`), pour afficher « réservé depuis... » ; modifiable. */
+  since?: string;
+  /** Un compte n'apparaît qu'une fois. */
+  allocations: LoanReservedAllocation[];
 }
 
 export type NewLoan = Omit<Loan, 'id'>;

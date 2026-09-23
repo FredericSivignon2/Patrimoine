@@ -3,7 +3,7 @@ import { AccountForm } from '../components/accounts/AccountForm';
 import { BanksCard } from '../components/banks/BanksCard';
 import { Button } from '../components/common/Button';
 import { EmptyState } from '../components/common/EmptyState';
-import { formatEuros, formatPercent } from '../components/common/format';
+import { formatEuros, formatPercent, lockedSegments } from '../components/common/format';
 import { ChevronRightIcon, PlusIcon } from '../components/common/icons';
 import { Modal } from '../components/common/Modal';
 import { PageHeader } from '../components/common/PageHeader';
@@ -22,7 +22,7 @@ const GROUPS: readonly { type: AccountType; title: string }[] = [
 ];
 
 export function AccountsPage() {
-  const { accounts, balances, locked, createAccount, updateAccount, removeAccount } = useAccounts();
+  const { accounts, balances, locked, reserved, createAccount, updateAccount, removeAccount } = useAccounts();
   const { movements } = useMovements();
   const { banks, createBank, removeBank } = useBanks();
   const { loans } = useLoans();
@@ -62,6 +62,7 @@ export function AccountsPage() {
                   {group.map((account) => {
                     const balance = balances.get(account.id) ?? 0;
                     const lockedAmount = locked.get(account.id) ?? 0;
+                    const reservedAmount = reserved.get(account.id) ?? 0;
                     const count = movementCount(account.id);
                     const bankName = account.bankId ? bankNames.get(account.bankId) : undefined;
                     return (
@@ -79,9 +80,9 @@ export function AccountsPage() {
                               {account.interestRate !== undefined && ` · ${formatPercent(account.interestRate)} / an`}
                               {` · ${count} mouvement${count > 1 ? 's' : ''}`}
                             </span>
-                            {lockedAmount > 0 && (
+                            {(lockedAmount > 0 || reservedAmount > 0) && (
                               <span className="mt-0.5 block text-xs font-medium text-amber-700">
-                                {formatEuros(lockedAmount)} bloqués · {formatEuros(balance - lockedAmount)} déblocables
+                                {[...lockedSegments(lockedAmount, reservedAmount), `${formatEuros(balance - lockedAmount - reservedAmount)} déblocables`].join(' · ')}
                               </span>
                             )}
                           </span>

@@ -31,6 +31,14 @@ const valid: PatrimoineData = {
         { date: '2027-03-05', amount: 500_000, effect: 'DURATION' },
         { date: '2028-03-05', amount: 200_000, effect: 'PAYMENT' },
       ],
+      reservedFunds: {
+        note: 'À verser à l’artisan',
+        since: '2026-06-10',
+        allocations: [
+          { accountId: 'a1', amount: 300_000 },
+          { accountId: 'a2', amount: 200_000 },
+        ],
+      },
     },
     {
       id: 'l2',
@@ -66,7 +74,7 @@ describe('parsePatrimoineData', () => {
     });
   });
 
-  it.each([1, 2, 3, 4, 5, 6, 7])('lit un fichier en version %i et le migre en version courante', (version) => {
+  it.each([1, 2, 3, 4, 5, 6, 7, 8])('lit un fichier en version %i et le migre en version courante', (version) => {
     const parsed = parsePatrimoineData({
       version,
       accounts: [{ id: 'a', name: 'Livret', type: 'SAVINGS', initialBalance: 100, interestRate: 2 }],
@@ -360,6 +368,52 @@ describe('parsePatrimoineData', () => {
     it('rejette une banque de prêt invalide', () => {
       expect(() => parsePatrimoineData(withLoan({ bankId: '' }))).toThrow(InvalidDataError);
       expect(() => parsePatrimoineData(withLoan({ bankId: 42 }))).toThrow(InvalidDataError);
+    });
+
+    describe('fonds réservés', () => {
+      it('lit une note, une date et des allocations, et accepte leur absence', () => {
+        const loan = parsePatrimoineData(
+          withLoan({
+            reservedFunds: {
+              note: 'À verser à l’artisan',
+              since: '2026-06-10',
+              allocations: [
+                { accountId: 'a1', amount: 300_000 },
+                { accountId: 'a2', amount: 200_000 },
+              ],
+            },
+          }),
+        ).loans[0];
+        expect(loan.reservedFunds).toEqual({
+          note: 'À verser à l’artisan',
+          since: '2026-06-10',
+          allocations: [
+            { accountId: 'a1', amount: 300_000 },
+            { accountId: 'a2', amount: 200_000 },
+          ],
+        });
+        expect(parsePatrimoineData(withLoan({})).loans[0].reservedFunds).toBeUndefined();
+      });
+
+      it('accepte des fonds réservés sans note ni date', () => {
+        const loan = parsePatrimoineData(withLoan({ reservedFunds: { allocations: [{ accountId: 'a1', amount: 100_000 }] } }))
+          .loans[0];
+        expect(loan.reservedFunds).toEqual({ allocations: [{ accountId: 'a1', amount: 100_000 }] });
+      });
+
+      it.each<[string, unknown]>([
+        ['un objet invalide', 'bientôt'],
+        ['des allocations qui ne sont pas une liste', { allocations: 'bientôt' }],
+        ['une allocation qui n’est pas un objet', { allocations: [42] }],
+        ['une allocation sans compte', { allocations: [{ amount: 100_000 }] }],
+        ['une allocation au compte vide', { allocations: [{ accountId: '', amount: 100_000 }] }],
+        ['une allocation au montant décimal', { allocations: [{ accountId: 'a1', amount: 10.5 }] }],
+        ['une allocation au montant nul', { allocations: [{ accountId: 'a1', amount: 0 }] }],
+        ['une note invalide', { note: 42, allocations: [{ accountId: 'a1', amount: 100_000 }] }],
+        ['une date invalide', { since: '2026-02-30', allocations: [{ accountId: 'a1', amount: 100_000 }] }],
+      ])('rejette %s', (_label, reservedFunds) => {
+        expect(() => parsePatrimoineData(withLoan({ reservedFunds }))).toThrow(InvalidDataError);
+      });
     });
   });
 

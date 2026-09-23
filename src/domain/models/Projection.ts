@@ -19,9 +19,11 @@ export interface ProjectionPoint {
   month: MonthKey;
   /** Solde projeté en centimes. */
   balance: number;
-  /** Part bloquée du solde, en centimes. */
+  /** Part bloquée du solde (fonds bloqués réglementaires), en centimes. */
   locked: number;
-  /** Part déblocable : `balance - locked`. */
+  /** Part réservée à un prêt (versée mais pas encore payée à sa destination), en centimes ; plafonnée à `balance - locked`. */
+  reserved: number;
+  /** Part déblocable : `balance - locked - reserved`. */
   available: number;
 }
 
@@ -29,6 +31,7 @@ export interface HorizonProjection {
   months: ProjectionHorizon;
   balance: number;
   locked: number;
+  reserved: number;
   available: number;
 }
 
@@ -36,6 +39,7 @@ export interface AccountProjection {
   accountId: string;
   currentBalance: number;
   currentLocked: number;
+  currentReserved: number;
   /** Versement net mensuel moyen constaté, en centimes. */
   monthlyContribution: number;
   /** Taux annuel appliqué, en pourcentage. */
@@ -47,6 +51,7 @@ export interface AccountProjection {
 export interface PortfolioProjection {
   currentBalance: number;
   currentLocked: number;
+  currentReserved: number;
   currentAvailable: number;
   monthlyContribution: number;
   points: ProjectionPoint[];

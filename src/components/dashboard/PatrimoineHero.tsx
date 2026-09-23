@@ -66,6 +66,10 @@ interface PatrimoineHeroProps {
   monthlyContribution: number;
   status: SafetyStatus | undefined;
   onEditSafety: () => void;
+  /** Réservé pour un ou plusieurs prêts (déjà exclu du déblocable ci-dessus) ; absent ou nul, la ligne n'est pas affichée. */
+  reserved?: number;
+  /** Détail par prêt, pour l'info-bulle (« Prêt conso travaux : 8 000 € »). */
+  reservedBreakdown?: string;
   /** Valeur nette de revente des biens loués (coussin de sécurité à part) ; absent ou nul, la ligne n'est pas affichée. */
   propertyCushion?: number;
   /** Détail par bien, pour l'info-bulle (« Appartement loué : 85 000 € »). */
@@ -79,6 +83,8 @@ export function PatrimoineHero({
   monthlyContribution,
   status,
   onEditSafety,
+  reserved,
+  reservedBreakdown,
   propertyCushion,
   propertyBreakdown,
 }: PatrimoineHeroProps) {
@@ -94,7 +100,11 @@ export function PatrimoineHero({
       <p className="mt-1 text-3xl font-bold tabular-nums sm:text-4xl">{formatEuros(total)}</p>
 
       <dl className="mt-4 grid grid-cols-3 gap-3 text-sm">
-        <Stat label="Déblocable" value={formatEuros(available)} title="Fonds immédiatement utilisables (hors fonds bloqués)" />
+        <Stat
+          label="Déblocable"
+          value={formatEuros(available)}
+          title="Fonds immédiatement utilisables (hors fonds bloqués et réservés)"
+        />
         <Stat label="Bloqué" value={formatEuros(locked)} title="Fonds bloqués jusqu'à leur date de déblocage" />
         <Stat
           label="Épargne mensuelle"
@@ -102,6 +112,13 @@ export function PatrimoineHero({
           title="Moyenne des versements nets des 12 derniers mois complets"
         />
       </dl>
+
+      {reserved !== undefined && reserved > 0 && (
+        <p className={`mt-2 px-1 text-xs ${tone.muted}`} title={reservedBreakdown}>
+          Dont {formatEuros(reserved)} réservés pour un ou plusieurs prêts en cours (pas encore versés à leur
+          destination) — déjà exclus du déblocable ci-dessus.
+        </p>
+      )}
 
       <div role="status" className={`mt-4 flex items-center gap-3 rounded-2xl px-3 py-2.5 text-sm ${tone.panel}`}>
         <ShieldIcon className="size-5 shrink-0" />

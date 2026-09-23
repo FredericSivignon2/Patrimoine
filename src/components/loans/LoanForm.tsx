@@ -8,9 +8,11 @@ import {
   type Loan,
   type LoanKind,
   type LoanPrepayment,
+  type LoanReservedAllocation,
   type NewLoan,
   type PrepaymentEffect,
 } from '../../domain/models/Loan';
+import type { Account } from '../../domain/models/Account';
 import type { Bank } from '../../domain/models/Bank';
 import { centsToInputString, parseAmountToCents, parsePercent, sumCents } from '../../domain/services/FinancialMath';
 import { buildAmortization, measurePrepayments, paymentForTerm, type Amortization } from '../../domain/services/LoanEngine';
@@ -51,6 +53,36 @@ function readPrepayments(rows: readonly PrepaymentRow[]): { prepayments: LoanPre
   return { prepayments, error: null };
 }
 
+interface ReservedRow {
+  key: number;
+  accountId: string;
+  amount: string;
+}
+
+const newReservedRow = (accountId = '', amount = ''): ReservedRow => ({ key: ++rowKeySeed, accountId, amount });
+
+/**
+ * Lignes saisies → allocations de fonds réservés ; une ligne entièrement vide est ignorée, une ligne incomplète ou
+ * un compte répété est une erreur.
+ */
+function readReservedAllocations(
+  rows: readonly ReservedRow[],
+): { allocations: LoanReservedAllocation[]; error: string | null } {
+  const allocations: LoanReservedAllocation[] = [];
+  for (const [index, row] of rows.entries()) {
+    if (row.accountId === '' && row.amount.trim() === '') continue;
+    const amount = parseAmountToCents(row.amount);
+    if (row.accountId === '' || amount === null || amount <= 0) {
+      return { allocations, error: `Fonds réservés ${index + 1} : choisissez un compte et un montant positif.` };
+    }
+    if (allocations.some((allocation) => allocation.accountId === row.accountId)) {
+      return { allocations, error: `Fonds réservés ${index + 1} : ce compte est déjà utilisé pour ce prêt.` };
+    }
+    allocations.push({ accountId: row.accountId, amount });
+  }
+  return { allocations, error: null };
+}
+
 const isKind = (value: string): value is LoanKind => LOAN_KINDS.some((kind) => kind === value);
 const isEffect = (value: string): value is PrepaymentEffect => PREPAYMENT_EFFECTS.some((effect) => effect === value);
 
@@ -60,12 +92,13 @@ const totalInterest = (schedule: Amortization): number => sumCents(schedule.rows
 interface LoanFormProps {
   loan?: Loan;
   banks: readonly Bank[];
+  accounts: readonly Account[];
   onSubmit: (input: NewLoan) => Promise<unknown>;
   onDelete?: () => Promise<unknown>;
   onCancel: () => void;
 }
 
-export function LoanForm({ loan, banks, onSubmit, onDelete, onCancel }: LoanFormProps) {
+export function LoanForm({ loan, banks, accounts, onSubmit, onDelete, onCancel }: LoanFormProps) {
   const [name, setName] = useState(loan?.name ?? '');
   const [kind, setKind] = useState<LoanKind>(loan?.kind ?? 'MORTGAGE');
   const [bankId, setBankId] = useState(loan?.bankId ?? '');
@@ -82,6 +115,11 @@ export function LoanForm({ loan, banks, onSubmit, onDelete, onCancel }: LoanForm
   const [prepaymentRows, setPrepaymentRows] = useState<PrepaymentRow[]>(() =>
     (loan?.prepayments ?? []).map((prepayment) => newRow(centsToInputString(prepayment.amount), prepayment.date, prepayment.effect)),
   );
+  const [reservedNote, setReservedNote] = useState(loan?.reservedFunds?.note ?? '');
+  const [reservedSince, setReservedSince] = useState(loan?.reservedFunds?.since ?? '');
+  const [reservedRows, setReservedRows] = useState<ReservedRow[]>(() =>
+    (loan?.reservedFunds?.allocations ?? []).map((allocation) => newReservedRow(allocation.accountId, centsToInputString(allocation.amount))),
+  );
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -90,6 +128,7 @@ export function LoanForm({ loan, banks, onSubmit, onDelete, onCancel }: LoanForm
   const payment = parseAmountToCents(paymentText);
   const insurance = insuranceText.trim() === '' ? 0 : parseAmountToCents(insuranceText);
   const { prepayments, error: prepaymentsError } = readPrepayments(prepaymentRows);
+  const { allocations: reservedAllocations, error: reservedError } = readReservedAllocations(reservedRows);
 
   const terms =
     principal !== null && principal > 0 && rate !== null && payment !== null && payment > 0 && isValidIsoDate(firstPaymentDate)
@@ -114,6 +153,9 @@ export function LoanForm({ loan, banks, onSubmit, onDelete, onCancel }: LoanForm
 
   const updateRow = (key: number, patch: Partial<Omit<PrepaymentRow, 'key'>>): void =>
     setPrepaymentRows((rows) => rows.map((row) => (row.key === key ? { ...row, ...patch } : row)));
+
+  const updateReservedRow = (key: number, patch: Partial<Omit<ReservedRow, 'key'>>): void =>
+    setReservedRows((rows) => rows.map((row) => (row.key === key ? { ...row, ...patch } : row)));
 
   const computePayment = (): void => {
     const months = Number(termText.trim());
@@ -151,6 +193,10 @@ export function LoanForm({ loan, banks, onSubmit, onDelete, onCancel }: LoanForm
       setError(prepaymentsError);
       return;
     }
+    if (reservedError !== null) {
+      setError(reservedError);
+      return;
+    }
     void run(() =>
       onSubmit({
         name,
@@ -162,6 +208,14 @@ export function LoanForm({ loan, banks, onSubmit, onDelete, onCancel }: LoanForm
         firstPaymentDate,
         prepayments,
         bankId: bankId || undefined,
+        reservedFunds:
+          reservedAllocations.length > 0
+            ? {
+                allocations: reservedAllocations,
+                ...(reservedNote.trim() ? { note: reservedNote.trim() } : {}),
+                ...(reservedSince ? { since: reservedSince } : {}),
+              }
+            : undefined,
       }),
     );
   };
@@ -315,6 +369,86 @@ export function LoanForm({ loan, banks, onSubmit, onDelete, onCancel }: LoanForm
           Réduire la durée : la mensualité reste, le prêt se termine plus tôt. Réduire la mensualité : la date de fin
           est conservée. Ce montant n’est pas déduit de vos comptes : enregistrez le retrait correspondant, sur le
           compte qui le finance.
+        </p>
+      </section>
+
+      <section className="space-y-3 rounded-2xl bg-slate-50 p-3 ring-1 ring-slate-200" aria-label="Fonds réservés">
+        <h3 className="text-sm font-semibold text-slate-800">Fonds réservés (pas encore versés)</h3>
+        <p className="text-xs text-slate-500">
+          Si une part de ce prêt est déjà sur vos comptes sans avoir atteint sa destination (ex. en attendant de
+          régler un artisan), indiquez-la ici : elle ne comptera pas comme déblocable tant qu'elle y reste.
+        </p>
+        <div className="grid grid-cols-2 gap-2">
+          <Field label="Destination (optionnel)">
+            <input
+              className={inputClass}
+              value={reservedNote}
+              onChange={(event) => setReservedNote(event.target.value)}
+              placeholder="À verser à l’artisan"
+              maxLength={120}
+            />
+          </Field>
+          <Field label="Réservé depuis le (optionnel)">
+            <input
+              type="date"
+              className={inputClass}
+              value={reservedSince}
+              onChange={(event) => setReservedSince(event.target.value)}
+            />
+          </Field>
+        </div>
+        {reservedRows.map((row, index) => (
+          <fieldset key={row.key} className="rounded-xl bg-white p-3 ring-1 ring-slate-200">
+            <legend className="sr-only">Fonds réservés {index + 1}</legend>
+            <div className="mb-2 flex items-center justify-between">
+              <span className="text-xs font-semibold text-slate-500">Compte {index + 1}</span>
+              <button
+                type="button"
+                aria-label={`Retirer le compte ${index + 1} des fonds réservés`}
+                onClick={() => setReservedRows((rows) => rows.filter((other) => other.key !== row.key))}
+                className="grid size-8 place-items-center rounded-full text-slate-500 hover:bg-slate-100"
+              >
+                <XIcon className="size-4" />
+              </button>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <Field label="Compte">
+                <select
+                  className={inputClass}
+                  value={row.accountId}
+                  onChange={(event) => updateReservedRow(row.key, { accountId: event.target.value })}
+                >
+                  <option value="">Choisir un compte</option>
+                  {accounts.map((account) => (
+                    <option key={account.id} value={account.id}>
+                      {account.name}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="Montant réservé">
+                <SuffixInput
+                  suffix="€"
+                  value={row.amount}
+                  onChange={(event) => updateReservedRow(row.key, { amount: event.target.value })}
+                  placeholder="8 000"
+                />
+              </Field>
+            </div>
+          </fieldset>
+        ))}
+        <Button variant="secondary" className="w-full" onClick={() => setReservedRows((rows) => [...rows, newReservedRow()])}>
+          <PlusIcon className="size-4" />
+          Ajouter un compte
+        </Button>
+        {reservedAllocations.length > 0 && (
+          <p className="text-sm font-medium text-slate-700">
+            Total réservé : {formatEuros(sumCents(reservedAllocations.map((allocation) => allocation.amount)))}
+          </p>
+        )}
+        <p className="text-xs text-slate-500">
+          Une fois réglé, retirez la ligne correspondante et enregistrez le retrait sur le compte concerné — sans le
+          rattacher à un poste, car ce prêt n’est pas une dépense de poste.
         </p>
       </section>
 

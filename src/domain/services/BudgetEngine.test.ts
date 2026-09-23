@@ -26,7 +26,7 @@ const budget = (id: string, percent: number, name = id): Budget => ({ id, name, 
 export const linearPoints = (start = 2_755_000, monthly = 50_000): ProjectionPoint[] =>
   Array.from({ length: 61 }, (_, index) => {
     const available = start + index * monthly;
-    return { month: addMonths('2026-09', index), balance: available, locked: 0, available };
+    return { month: addMonths('2026-09', index), balance: available, locked: 0, reserved: 0, available };
   });
 
 describe('spendableAmount', () => {
