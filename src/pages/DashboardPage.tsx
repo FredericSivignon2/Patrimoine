@@ -11,6 +11,7 @@ import { formatEuros, formatPercent, formatSignedEuros } from '../components/com
 import { PatrimoineHero } from '../components/dashboard/PatrimoineHero';
 import { LoansSummaryCard } from '../components/dashboard/LoansSummaryCard';
 import { SafetyDialog } from '../components/dashboard/SafetyDialog';
+import { SavingsEffortBanner } from '../components/dashboard/SavingsEffortBanner';
 import { SpendSimulator } from '../components/dashboard/SpendSimulator';
 import { UnlockScheduleCard } from '../components/dashboard/UnlockScheduleCard';
 import { useFinancial } from '../context/FinancialContext';
@@ -21,6 +22,7 @@ import { useLoans } from '../hooks/useLoans';
 import { useProjections } from '../hooks/useProjections';
 import { useProperties } from '../hooks/useProperties';
 import { useSafety } from '../hooks/useSafety';
+import { useSavingsEffort } from '../hooks/useSavingsEffort';
 
 const deltaTone = (cents: number): string => (cents < 0 ? 'text-rose-700' : 'text-emerald-700');
 
@@ -36,6 +38,7 @@ export function DashboardPage() {
   const { budgets, plan, spent, hasSafety, objectivesSummary } = useBudgets();
   const { items: loanItems, totals: loanTotals } = useLoans();
   const { items: propertyItems, totalCushion } = useProperties();
+  const { report: effortReport } = useSavingsEffort();
   const { loadDemoData } = useFinancial();
   const [editingSafety, setEditingSafety] = useState(false);
 
@@ -81,6 +84,8 @@ export function DashboardPage() {
         propertyCushion={totalCushion}
         propertyBreakdown={propertyBreakdown}
       />
+
+      {effortReport && <SavingsEffortBanner window={effortReport.current} />}
 
       <BudgetsSummaryCard plan={plan} hasSafety={hasSafety} objectivesNotReached={objectivesSummary.notReached} />
 

@@ -222,6 +222,38 @@ describe('SettingsRepository', () => {
     await expect(settings.saveSafety(invalid)).rejects.toBeInstanceOf(ValidationError);
     expect(await settings.getSafety()).toBeUndefined();
   });
+
+  it('n’a pas d’effort d’épargne configuré tant que rien n’est enregistré', async () => {
+    expect(await settings.getSavingsEffort()).toBeUndefined();
+  });
+
+  it('enregistre, relit et supprime l’effort d’épargne', async () => {
+    const input = { incomeSources: [{ name: '  Salaire  ', monthlyAmount: 300_000 }], targetRatePercent: 20 };
+    const saved = await settings.saveSavingsEffort(input);
+    expect(saved).toEqual({ incomeSources: [{ name: 'Salaire', monthlyAmount: 300_000 }], targetRatePercent: 20 });
+    expect(await settings.getSavingsEffort()).toEqual(saved);
+    expect(driver.stored?.savingsEffort).toEqual(saved);
+
+    await settings.clearSavingsEffort();
+    expect(await settings.getSavingsEffort()).toBeUndefined();
+    expect(driver.stored && 'savingsEffort' in driver.stored).toBe(false);
+  });
+
+  it('accepte une liste de revenus vide', async () => {
+    const saved = await settings.saveSavingsEffort({ incomeSources: [], targetRatePercent: 15 });
+    expect(saved.incomeSources).toEqual([]);
+  });
+
+  it.each([
+    ['un revenu sans nom', { incomeSources: [{ name: '  ', monthlyAmount: 100_000 }], targetRatePercent: 20 }],
+    ['un revenu au montant nul', { incomeSources: [{ name: 'Salaire', monthlyAmount: 0 }], targetRatePercent: 20 }],
+    ['un revenu au montant décimal', { incomeSources: [{ name: 'Salaire', monthlyAmount: 10.5 }], targetRatePercent: 20 }],
+    ['un taux négatif', { incomeSources: [], targetRatePercent: -1 }],
+    ['un taux supérieur à 100 %', { incomeSources: [], targetRatePercent: 120 }],
+  ])('refuse %s', async (_label, invalid) => {
+    await expect(settings.saveSavingsEffort(invalid)).rejects.toBeInstanceOf(ValidationError);
+    expect(await settings.getSavingsEffort()).toBeUndefined();
+  });
 });
 
 describe('BudgetRepository', () => {

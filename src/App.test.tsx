@@ -1514,3 +1514,123 @@ describe('Biens immobiliers loués', () => {
     expect(storage.stored?.properties[0]).not.toHaveProperty('loanId');
   });
 });
+
+describe('Effort d’épargne', () => {
+  const monthsAgo = (count: number, day = '05'): string => `${addMonths(monthKeyOfDate(new Date()), -count)}-${day}`;
+
+  /** `monthlyAmountsEuros[0]` est le mois le plus ancien ; le dernier est le mois complet le plus récent (1 mois avant aujourd'hui). */
+  const withSavingsHistory = (monthlyAmountsEuros: number[]): PatrimoineData => {
+    const base = seeded();
+    const movements: Movement[] = [...base.movements];
+    monthlyAmountsEuros.forEach((amountEuros, index) => {
+      movements.push({
+        id: `sav-${index}`,
+        accountId: 'a2', // Livret A
+        type: 'DEPOSIT',
+        amount: amountEuros * 100,
+        date: monthsAgo(monthlyAmountsEuros.length - index),
+      });
+    });
+    return { ...base, movements };
+  };
+
+  it('accède à la page depuis la navigation', async () => {
+    const { user } = await renderApp('/', seeded());
+    await user.click(mobileNav().getByRole('link', { name: /effort/i }));
+    expect(await screen.findByRole('heading', { name: 'Effort d’épargne' })).toBeInTheDocument();
+  });
+
+  it('calcule l’objectif en direct pendant la saisie, avant d’enregistrer', async () => {
+    const { user } = await renderApp('/effort', seeded());
+
+    await user.click(screen.getByRole('button', { name: /ajouter un revenu/i }));
+    await user.type(screen.getByLabelText('Nom'), 'Salaire');
+    await user.type(screen.getByLabelText(/montant net/i), '3000');
+    const rate = screen.getByLabelText(/taux d'épargne cible/i);
+    await user.clear(rate);
+    await user.type(rate, '20');
+
+    const status = screen.getByRole('status');
+    expect(status).toHaveTextContent(euros('3 000,00'));
+    expect(status).toHaveTextContent(/objectif d'épargne libre : 600,00.*20 %/i);
+  });
+
+  it('enregistre les revenus et le taux, puis les relit à la réouverture', async () => {
+    const { storage, user } = await renderApp('/effort', seeded());
+
+    await user.click(screen.getByRole('button', { name: /ajouter un revenu/i }));
+    await user.type(screen.getByLabelText('Nom'), 'Salaire');
+    await user.type(screen.getByLabelText(/montant net/i), '3000');
+    const rate = screen.getByLabelText(/taux d'épargne cible/i);
+    await user.clear(rate);
+    await user.type(rate, '20');
+    await user.click(screen.getByRole('button', { name: 'Enregistrer' }));
+
+    expect(storage.stored?.savingsEffort).toEqual({
+      incomeSources: [{ name: 'Salaire', monthlyAmount: 300_000 }],
+      targetRatePercent: 20,
+    });
+    expect(await screen.findByRole('heading', { name: 'Synthèse de l’effort d’épargne' })).toBeInTheDocument();
+  });
+
+  it('ignore une ligne de revenu vide et refuse une ligne incomplète', async () => {
+    const { storage, user } = await renderApp('/effort', seeded());
+
+    await user.click(screen.getByRole('button', { name: /ajouter un revenu/i }));
+    await user.click(screen.getByRole('button', { name: 'Enregistrer' }));
+    expect(storage.stored?.savingsEffort).toEqual({ incomeSources: [], targetRatePercent: 15 });
+
+    await user.click(screen.getByRole('button', { name: /ajouter un revenu/i }));
+    await user.type(screen.getAllByLabelText('Nom')[0], 'Salaire');
+    await user.click(screen.getByRole('button', { name: 'Enregistrer' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent(/revenu 1.*nom et un montant/i);
+  });
+
+  it('n’affiche pas de ligne sous la bannière tant que rien n’est configuré', async () => {
+    await renderApp('/', seeded());
+    await screen.findByRole('region', { name: 'Patrimoine' });
+    expect(screen.queryByRole('link', { name: /coussin immobilier|objectif/i })).not.toBeInTheDocument();
+  });
+
+  it('affiche l’effort réalisé sous la bannière, avec un lien vers le détail', async () => {
+    const data: PatrimoineData = {
+      ...withSavingsHistory([1_000, 1_000, 1_000]), // 1 000 €/mois sur les 3 derniers mois complets
+      savingsEffort: { incomeSources: [{ name: 'Salaire', monthlyAmount: 300_000 }], targetRatePercent: 20 },
+    };
+    await renderApp('/', data);
+
+    // objectif = 20 % de 3 000 € (aucun prêt, aucune dépense de poste) = 600 €/mois ; réalisé 1 000 € : au-dessus
+    const banner = await screen.findByRole('link', { name: /600,00/ });
+    expect(banner).toHaveTextContent(euros('1 000,00'));
+    expect(banner).toHaveAttribute('href', '/effort');
+  });
+
+  it('propose de relever le taux cible quand le réalisé dépasse durablement l’objectif, et l’applique', async () => {
+    const data: PatrimoineData = {
+      ...withSavingsHistory([1_000, 1_000, 1_000, 1_000, 1_000, 1_000]), // 6 mois à 1 000 €
+      savingsEffort: { incomeSources: [{ name: 'Salaire', monthlyAmount: 300_000 }], targetRatePercent: 20 },
+    };
+    const { storage, user } = await renderApp('/effort', data);
+
+    const recalibrationHeading = await screen.findByRole('heading', { name: 'Un ajustement à envisager ?' });
+    const card = within(recalibrationHeading.closest('section') as HTMLElement);
+    expect(card.getByText(/20 %/).closest('span')).toHaveTextContent(/20 %.*35 %/);
+    await user.click(card.getByRole('button', { name: /relever à 35 %/i }));
+
+    expect(storage.stored?.savingsEffort?.targetRatePercent).toBe(35);
+  });
+
+  it('retire la configuration avec « Ne plus suivre »', async () => {
+    const data: PatrimoineData = {
+      ...seeded(),
+      savingsEffort: { incomeSources: [{ name: 'Salaire', monthlyAmount: 300_000 }], targetRatePercent: 20 },
+    };
+    const { storage, user } = await renderApp('/effort', data);
+
+    await user.click(screen.getByRole('button', { name: /ne plus suivre/i }));
+    await user.click(screen.getByRole('button', { name: 'Confirmer la suppression' }));
+
+    expect(storage.stored && 'savingsEffort' in storage.stored).toBe(false);
+    expect(screen.queryByRole('heading', { name: 'Synthèse de l’effort d’épargne' })).not.toBeInTheDocument();
+  });
+});

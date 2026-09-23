@@ -19,6 +19,7 @@ import {
 import type { MovementType, NewMovement } from '../models/Movement';
 import type { NewProperty, Property } from '../models/Property';
 import type { SafetySettings } from '../models/Safety';
+import type { IncomeSource, SavingsEffortSettings } from '../models/SavingsEffort';
 import { remainingBasisPoints } from './BudgetEngine';
 import { percentToBasisPoints } from './FinancialMath';
 import { buildAmortization } from './LoanEngine';
@@ -246,6 +247,25 @@ export function validateProperty(input: NewProperty, loans: readonly Loan[], oth
     property.loanId = input.loanId;
   }
   return property;
+}
+
+function validateIncomeSource(input: IncomeSource, index: number): IncomeSource {
+  const name = input.name.trim();
+  if (name === '') throw new ValidationError(`Revenu ${index + 1} : le nom est obligatoire.`);
+  if (!Number.isSafeInteger(input.monthlyAmount) || input.monthlyAmount <= 0) {
+    throw new ValidationError(`Revenu ${index + 1} : le montant mensuel doit être strictement positif.`);
+  }
+  return { name, monthlyAmount: input.monthlyAmount };
+}
+
+export function validateSavingsEffort(input: SavingsEffortSettings): SavingsEffortSettings {
+  if (!Number.isFinite(input.targetRatePercent) || input.targetRatePercent < 0 || input.targetRatePercent > 100) {
+    throw new ValidationError('Le taux d’épargne cible doit être compris entre 0 et 100 %.');
+  }
+  return {
+    incomeSources: input.incomeSources.map(validateIncomeSource),
+    targetRatePercent: percentToBasisPoints(input.targetRatePercent) / 100,
+  };
 }
 
 export function validateSafety(input: SafetySettings): SafetySettings {

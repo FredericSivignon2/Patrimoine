@@ -1,6 +1,6 @@
 import type { ComponentType } from 'react';
 import { NavLink, Outlet } from 'react-router-dom';
-import { ArrowsIcon, BankIcon, HomeIcon, PieIcon, WalletIcon } from '../common/icons';
+import { ArrowsIcon, BankIcon, HomeIcon, PieIcon, TrendingUpIcon, WalletIcon } from '../common/icons';
 import { SyncStatusChip } from './SyncStatusChip';
 
 interface NavItem {
@@ -18,6 +18,7 @@ const NAV_ITEMS: readonly NavItem[] = [
   { to: '/prets', label: 'Prêts', icon: BankIcon },
   { to: '/comptes', label: 'Comptes', icon: WalletIcon },
   { to: '/mouvements', label: 'Mouvements', icon: ArrowsIcon },
+  { to: '/effort', label: 'Effort d’épargne', mobileLabel: 'Effort', icon: TrendingUpIcon },
 ];
 
 export function AppLayout() {
@@ -59,7 +60,7 @@ export function AppLayout() {
         aria-label="Navigation mobile"
         className="fixed inset-x-0 bottom-0 z-30 border-t border-slate-200 bg-white pb-[env(safe-area-inset-bottom)] md:hidden"
       >
-        <ul className="mx-auto grid max-w-lg grid-cols-5">
+        <ul className="mx-auto grid max-w-lg grid-cols-6">
           {NAV_ITEMS.map(({ to, label, mobileLabel, end, icon: Icon }) => (
             <li key={to}>
               <NavLink

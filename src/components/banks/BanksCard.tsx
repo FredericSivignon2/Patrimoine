@@ -91,18 +91,21 @@ export function BanksCard({ banks, onCreate, onRemove }: BanksCardProps) {
         </Button>
       </form>
       {suggestions.length > 0 && (
-        <div className="mt-2 flex flex-wrap gap-2">
-          {suggestions.map((suggestion) => (
-            <button
-              key={suggestion}
-              type="button"
-              disabled={busy}
-              onClick={() => void add(suggestion)}
-              className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600 hover:bg-slate-200"
-            >
-              + {suggestion}
-            </button>
-          ))}
+        <div className="mt-2">
+          <p className="mb-1.5 text-xs text-slate-500">Suggestions, pas encore ajoutées :</p>
+          <div className="flex flex-wrap gap-2">
+            {suggestions.map((suggestion) => (
+              <button
+                key={suggestion}
+                type="button"
+                disabled={busy}
+                onClick={() => void add(suggestion)}
+                className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600 hover:bg-slate-200"
+              >
+                + {suggestion}
+              </button>
+            ))}
+          </div>
         </div>
       )}
       <FormError message={error} />

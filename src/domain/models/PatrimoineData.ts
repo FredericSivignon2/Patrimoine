@@ -5,6 +5,7 @@ import type { Loan } from './Loan';
 import type { Movement } from './Movement';
 import type { Property } from './Property';
 import type { SafetySettings } from './Safety';
+import type { SavingsEffortSettings } from './SavingsEffort';
 
 /**
  * Version 2 : tranches bloquées des comptes d'épargne et épargne de sécurité.
@@ -14,10 +15,11 @@ import type { SafetySettings } from './Safety';
  * Version 6 : remboursements anticipés d'un prêt (`Loan.prepayments`).
  * Version 7 : banques (`banks`, `Account.bankId`, `Loan.bankId`), tranche bloquée « disponible à la retraite »
  * (`LockedTranche.unlockAtRetirement`), biens immobiliers loués (`properties`).
+ * Version 8 : effort d'épargne mensuel (`savingsEffort`) : revenus récurrents et taux cible.
  * Les fichiers des versions précédentes restent lisibles ; un client plus ancien refuse un fichier plus récent
  * plutôt que d'en effacer silencieusement les nouveaux champs.
  */
-export const DATA_VERSION = 7;
+export const DATA_VERSION = 8;
 
 /** Contenu du fichier `patrimoine_data.json` (Drive) et du cache local. À traiter comme immuable. */
 export interface PatrimoineData {
@@ -34,6 +36,8 @@ export interface PatrimoineData {
   properties: Property[];
   /** Absent tant qu'aucun seuil de sécurité n'a été défini. */
   safety?: SafetySettings;
+  /** Absent tant que l'effort d'épargne n'a pas été configuré. */
+  savingsEffort?: SavingsEffortSettings;
 }
 
 export function createEmptyData(): PatrimoineData {

@@ -6,6 +6,7 @@ import { buildAmortization, finalRegularPayment, loanSnapshot, projectLoans } fr
 import { evaluateSafety } from './SafetyEngine';
 import { computeLocked, projectPortfolio } from './ProjectionEngine';
 import { propertyCushion } from './PropertyEngine';
+import { evaluateSavingsEffort } from './SavingsEffortEngine';
 import { spentByBudget } from './SpendingReport';
 
 const REFERENCE = new Date(2026, 8, 21);
@@ -117,6 +118,20 @@ describe('createDemoData', () => {
     ]);
     expect(demo.accounts.every((account) => account.bankId !== undefined)).toBe(true);
     expect(demo.loans.filter((loan) => loan.bankId).map((loan) => loan.name)).toEqual(['Prêt immobilier principal']);
+  });
+
+  it('propose un effort d’épargne calculable sans configuration supplémentaire', () => {
+    expect(demo.savingsEffort?.incomeSources).toHaveLength(2);
+    const report = evaluateSavingsEffort(
+      demo.savingsEffort!,
+      { loans: demo.loans, accounts: demo.accounts, movements: demo.movements },
+      REFERENCE,
+    );
+    expect(report.capacity.income).toBe(500_000);
+    expect(report.capacity.target).toBeGreaterThan(0);
+    expect(report.windows).toHaveLength(4);
+    expect(report.current.months).toBe(3);
+    expect(report.current.availableMonths).toBeGreaterThan(0);
   });
 
   it('montre un bien loué rattaché au prêt secondaire, avec un coussin positif', () => {

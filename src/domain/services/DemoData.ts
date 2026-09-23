@@ -5,6 +5,7 @@ import type { Loan } from '../models/Loan';
 import type { Movement, MovementType } from '../models/Movement';
 import { DATA_VERSION, type PatrimoineData } from '../models/PatrimoineData';
 import type { Property } from '../models/Property';
+import type { SavingsEffortSettings } from '../models/SavingsEffort';
 import { newId } from './ids';
 import { addMonths, monthKeyOfDate, toIsoDate } from './Months';
 
@@ -174,6 +175,15 @@ export function createDemoData(referenceDate: Date = new Date()): PatrimoineData
   add(livret.id, 'WITHDRAWAL', 600, addMonths(currentMonth, -5), '15', 'Travaux', travaux.id);
   add(livret.id, 'WITHDRAWAL', 350, addMonths(currentMonth, -2), '18', 'Week-end', vacances.id);
 
+  // Effort d'épargne : revenus du foyer et taux cible, pour illustrer la page sans configuration préalable.
+  const savingsEffort: SavingsEffortSettings = {
+    incomeSources: [
+      { name: 'Salaire', monthlyAmount: 280_000 },
+      { name: 'Salaire (conjoint)', monthlyAmount: 220_000 },
+    ],
+    targetRatePercent: 20,
+  };
+
   // Bien loué, financé par le prêt secondaire : sa valeur nette de revente (valeur − capital restant dû − frais de
   // vente) est un coussin de sécurité à part, non déblocable rapidement (voir `PropertyEngine`).
   const properties: Property[] = [
@@ -195,5 +205,6 @@ export function createDemoData(referenceDate: Date = new Date()): PatrimoineData
     banks,
     properties,
     safety: { threshold: 2_000_000, comfortMargin: 500_000 },
+    savingsEffort,
   };
 }

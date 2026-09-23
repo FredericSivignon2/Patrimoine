@@ -1,6 +1,7 @@
 import type { SafetySettings } from '../../domain/models/Safety';
+import type { SavingsEffortSettings } from '../../domain/models/SavingsEffort';
 import type { ISettingsRepository } from '../../domain/repositories/ISettingsRepository';
-import { validateSafety } from '../../domain/services/Validation';
+import { validateSafety, validateSavingsEffort } from '../../domain/services/Validation';
 import type { PatrimoineStore } from '../storage/PatrimoineStore';
 
 export class SettingsRepository implements ISettingsRepository {
@@ -20,6 +21,24 @@ export class SettingsRepository implements ISettingsRepository {
   clearSafety(): Promise<void> {
     return this.store.mutate((data) => {
       const { safety: _removed, ...rest } = data;
+      return { next: rest, result: undefined };
+    });
+  }
+
+  async getSavingsEffort(): Promise<SavingsEffortSettings | undefined> {
+    return this.store.snapshot().savingsEffort;
+  }
+
+  saveSavingsEffort(settings: SavingsEffortSettings): Promise<SavingsEffortSettings> {
+    return this.store.mutate((data) => {
+      const savingsEffort = validateSavingsEffort(settings);
+      return { next: { ...data, savingsEffort }, result: savingsEffort };
+    });
+  }
+
+  clearSavingsEffort(): Promise<void> {
+    return this.store.mutate((data) => {
+      const { savingsEffort: _removed, ...rest } = data;
       return { next: rest, result: undefined };
     });
   }

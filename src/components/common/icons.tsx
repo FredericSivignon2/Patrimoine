@@ -93,3 +93,10 @@ export const ChevronRightIcon = (props: IconProps) => (
     <path d="m9 6 6 6-6 6" />
   </Icon>
 );
+
+export const TrendingUpIcon = (props: IconProps) => (
+  <Icon {...props}>
+    <path d="M4 17 9.5 11 13.5 14 20 6.5" />
+    <path d="M15 6.5h5v5" />
+  </Icon>
+);

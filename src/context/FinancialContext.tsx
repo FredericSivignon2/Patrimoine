@@ -6,6 +6,7 @@ import type { Loan } from '../domain/models/Loan';
 import type { Movement } from '../domain/models/Movement';
 import type { Property } from '../domain/models/Property';
 import type { SafetySettings } from '../domain/models/Safety';
+import type { SavingsEffortSettings } from '../domain/models/SavingsEffort';
 import type { IAccountRepository } from '../domain/repositories/IAccountRepository';
 import type { IBankRepository } from '../domain/repositories/IBankRepository';
 import type { IBudgetRepository } from '../domain/repositories/IBudgetRepository';
@@ -36,6 +37,8 @@ interface DataSnapshot {
   properties: Property[];
   /** Absent tant qu'aucun seuil d'épargne de sécurité n'est défini. */
   safety: SafetySettings | undefined;
+  /** Absent tant que l'effort d'épargne n'a pas été configuré. */
+  savingsEffort: SavingsEffortSettings | undefined;
 }
 
 interface FinancialContextValue extends DataSnapshot {
@@ -62,6 +65,7 @@ const EMPTY_SNAPSHOT: DataSnapshot = {
   banks: [],
   properties: [],
   safety: undefined,
+  savingsEffort: undefined,
 };
 
 interface FinancialProviderProps {
@@ -106,7 +110,7 @@ export function FinancialProvider({ storage, children }: FinancialProviderProps)
   useEffect(() => {
     let active = true;
     const refresh = async (): Promise<void> => {
-      const [accounts, movements, budgets, loans, banks, properties, safety] = await Promise.all([
+      const [accounts, movements, budgets, loans, banks, properties, safety, savingsEffort] = await Promise.all([
         accountRepository.list(),
         movementRepository.list(),
         budgetRepository.list(),
@@ -114,8 +118,9 @@ export function FinancialProvider({ storage, children }: FinancialProviderProps)
         bankRepository.list(),
         propertyRepository.list(),
         settingsRepository.getSafety(),
+        settingsRepository.getSavingsEffort(),
       ]);
-      if (active) setData({ accounts, movements, budgets, loans, banks, properties, safety });
+      if (active) setData({ accounts, movements, budgets, loans, banks, properties, safety, savingsEffort });
     };
 
     const unsubscribe = store.subscribe(() => void refresh());

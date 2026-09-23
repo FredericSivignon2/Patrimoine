@@ -14,6 +14,7 @@ import type { Movement } from '../../domain/models/Movement';
 import { DATA_VERSION, type PatrimoineData } from '../../domain/models/PatrimoineData';
 import type { Property } from '../../domain/models/Property';
 import type { SafetySettings } from '../../domain/models/Safety';
+import type { IncomeSource, SavingsEffortSettings } from '../../domain/models/SavingsEffort';
 import { buildAmortization } from '../../domain/services/LoanEngine';
 import { isValidIsoDate } from '../../domain/services/Months';
 
@@ -221,6 +222,34 @@ function parseBudget(raw: unknown, index: number): Budget {
   return budget;
 }
 
+function parseIncomeSource(raw: unknown, where: string): IncomeSource {
+  if (!isRecord(raw)) throw new InvalidDataError(`${where} : objet attendu.`);
+  const { name, monthlyAmount } = raw;
+  if (typeof name !== 'string' || name.trim() === '') throw new InvalidDataError(`${where} : nom invalide.`);
+  if (typeof monthlyAmount !== 'number' || !Number.isSafeInteger(monthlyAmount) || monthlyAmount <= 0) {
+    throw new InvalidDataError(`${where} : montant invalide (centimes entiers positifs attendus).`);
+  }
+  return { name, monthlyAmount };
+}
+
+function parseSavingsEffort(raw: unknown): SavingsEffortSettings {
+  if (!isRecord(raw)) throw new InvalidDataError('effort d’épargne : objet attendu.');
+  const { incomeSources, targetRatePercent } = raw;
+  if (!isUnknownArray(incomeSources)) throw new InvalidDataError('effort d’épargne : revenus invalides.');
+  if (
+    typeof targetRatePercent !== 'number' ||
+    !Number.isFinite(targetRatePercent) ||
+    targetRatePercent < 0 ||
+    targetRatePercent > 100
+  ) {
+    throw new InvalidDataError('effort d’épargne : taux cible invalide.');
+  }
+  return {
+    incomeSources: incomeSources.map((source, index) => parseIncomeSource(source, `effort d’épargne.revenus[${index}]`)),
+    targetRatePercent,
+  };
+}
+
 function parseSafety(raw: unknown): SafetySettings {
   if (!isRecord(raw)) throw new InvalidDataError('épargne de sécurité : objet attendu.');
   const { threshold, comfortMargin } = raw;
@@ -248,7 +277,7 @@ export function parsePatrimoineData(raw: unknown): PatrimoineData {
       `Version de fichier non prise en charge : ${String(raw.version)}. Mettez l’application à jour.`,
     );
   }
-  const { accounts, movements, budgets, loans, banks, properties, safety } = raw;
+  const { accounts, movements, budgets, loans, banks, properties, safety, savingsEffort } = raw;
   if (!isUnknownArray(accounts)) throw new InvalidDataError('La liste des comptes est manquante.');
   if (!isUnknownArray(movements)) throw new InvalidDataError('La liste des mouvements est manquante.');
   if (isPresent(budgets) && !isUnknownArray(budgets)) throw new InvalidDataError('La liste des postes est invalide.');
@@ -268,6 +297,7 @@ export function parsePatrimoineData(raw: unknown): PatrimoineData {
     properties: isUnknownArray(properties) ? properties.map(parseProperty) : [],
   };
   if (isPresent(safety)) data.safety = parseSafety(safety);
+  if (isPresent(savingsEffort)) data.savingsEffort = parseSavingsEffort(savingsEffort);
   return data;
 }
 

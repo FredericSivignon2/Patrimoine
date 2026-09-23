@@ -46,6 +46,7 @@ const valid: PatrimoineData = {
   properties: [
     { id: 'pr1', name: 'Appartement loué', estimatedValue: 22_000_000, loanId: 'l1', sellingFeePercent: 8 },
   ],
+  savingsEffort: { incomeSources: [{ name: 'Salaire', monthlyAmount: 300_000 }], targetRatePercent: 20 },
 };
 
 describe('parsePatrimoineData', () => {
@@ -65,7 +66,7 @@ describe('parsePatrimoineData', () => {
     });
   });
 
-  it.each([1, 2, 3, 4, 5, 6])('lit un fichier en version %i et le migre en version courante', (version) => {
+  it.each([1, 2, 3, 4, 5, 6, 7])('lit un fichier en version %i et le migre en version courante', (version) => {
     const parsed = parsePatrimoineData({
       version,
       accounts: [{ id: 'a', name: 'Livret', type: 'SAVINGS', initialBalance: 100, interestRate: 2 }],
@@ -78,6 +79,7 @@ describe('parsePatrimoineData', () => {
     expect(parsed.banks).toEqual([]);
     expect(parsed.properties).toEqual([]);
     expect(parsed.safety).toBeUndefined();
+    expect(parsed.savingsEffort).toBeUndefined();
   });
 
   it('relit les tranches bloquées, la durée de blocage des versements et l’épargne de sécurité', () => {
@@ -415,6 +417,36 @@ describe('parsePatrimoineData', () => {
       ['un bien au prêt rattaché vide', { loanId: '' }],
     ])('rejette %s', (_label, override) => {
       expect(() => parsePatrimoineData(withProperty(override))).toThrow(InvalidDataError);
+    });
+  });
+
+  describe('effort d’épargne', () => {
+    const withEffort = (savingsEffort: unknown) => ({ accounts: [], movements: [], savingsEffort });
+
+    it('lit les revenus et le taux cible, et accepte leur absence', () => {
+      const parsed = parsePatrimoineData(
+        withEffort({ incomeSources: [{ name: 'Salaire', monthlyAmount: 300_000 }], targetRatePercent: 20 }),
+      );
+      expect(parsed.savingsEffort).toEqual({ incomeSources: [{ name: 'Salaire', monthlyAmount: 300_000 }], targetRatePercent: 20 });
+      expect(parsePatrimoineData({ accounts: [], movements: [] }).savingsEffort).toBeUndefined();
+    });
+
+    it('accepte une liste de revenus vide', () => {
+      expect(parsePatrimoineData(withEffort({ incomeSources: [], targetRatePercent: 15 })).savingsEffort?.incomeSources).toEqual([]);
+    });
+
+    it.each<[string, unknown]>([
+      ['un objet invalide', 'bientôt'],
+      ['des revenus qui ne sont pas une liste', { incomeSources: 'bientôt', targetRatePercent: 20 }],
+      ['un revenu qui n’est pas un objet', { incomeSources: [42], targetRatePercent: 20 }],
+      ['un revenu sans nom', { incomeSources: [{ monthlyAmount: 100_000 }], targetRatePercent: 20 }],
+      ['un revenu au montant décimal', { incomeSources: [{ name: 'Salaire', monthlyAmount: 10.5 }], targetRatePercent: 20 }],
+      ['un revenu au montant nul', { incomeSources: [{ name: 'Salaire', monthlyAmount: 0 }], targetRatePercent: 20 }],
+      ['un taux manquant', { incomeSources: [] }],
+      ['un taux négatif', { incomeSources: [], targetRatePercent: -1 }],
+      ['un taux supérieur à 100 %', { incomeSources: [], targetRatePercent: 120 }],
+    ])('rejette %s', (_label, savingsEffort) => {
+      expect(() => parsePatrimoineData(withEffort(savingsEffort))).toThrow(InvalidDataError);
     });
   });
 

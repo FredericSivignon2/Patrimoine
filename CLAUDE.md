@@ -12,7 +12,7 @@ Application web monopage (SPA) autonome, orientée mobile-first et desktop, pour
 
 ## 2. État actuel (résumé)
 
-**Livré et testé** (`npm run test` : 583 tests, 18 fichiers) :
+**Livré et testé** (`npm run test` : 636 tests, 19 fichiers) :
 - **Comptes et mouvements :** courants et épargne, versements/retraits, solde courant, épargne mensuelle constatée, projections à 1, 2, 3 et 5 ans (intérêts composés). Sur un compte courant on ne saisit que le solde du mois, pas chaque dépense.
 - **Prêts en cours** (page `/prets`) : immobilier, rénovation (dont éco-PTZ à 0 %), consommation, autre ; échéancier calculé, capital restant dû, mensualités (assurance comprise), intérêts restants, dates de fin, évolution à 1, 2, 3 et 5 ans, calcul d'une mensualité depuis une durée ; carte sur le tableau de bord.
 - **Remboursements anticipés** (partiels, prévus ou déjà faits ; dans le formulaire du prêt) : montant, date et effet (réduire la durée ou la mensualité) ; le formulaire compare avec et sans, la carte du prêt indique échéances et intérêts économisés.
@@ -26,6 +26,7 @@ Application web monopage (SPA) autonome, orientée mobile-first et desktop, pour
 - **Banques :** liste libre (`banks`, gérée depuis la page Comptes, avec 7 suggestions en un clic), rattachée à un compte ou un prêt (facultatif) ; badge d'initiales colorées devant le nom dans les listes (pas de vrai logo de marque, pour éviter toute question de droit d'usage et rester autonome hors-ligne).
 - **Tranche bloquée « disponible à la retraite » :** alternative à une date de déblocage quand elle n'est pas connue (ex. une part de PEE débloquée au départ en retraite) ; toujours comptée comme bloquée, absente du calendrier des prochains déblocages.
 - **Biens immobiliers loués** (page Comptes) : bien non entièrement remboursé, rattaché à un prêt existant (facultatif) ; sa valeur nette de revente (valeur estimée − capital restant dû du prêt − frais de vente estimés) est un **coussin de sécurité à part**, affiché sous la bannière du tableau de bord — jamais dans le déblocable, le dépensable ni le niveau de l'épargne de sécurité, car non déblocable rapidement.
+- **Effort d'épargne** (page `/effort`, 6ᵉ onglet) : revenus nets mensuels récurrents saisis une fois (jamais ventilés ailleurs), taux d'épargne cible (%) appliqué à ce qui reste après mensualités de prêts et moyenne des dépenses de postes ; l'épargne réalisée est déduite des versements déjà enregistrés sur les comptes d'épargne (rien à ressaisir chaque mois). Synthèse sur 3 mois, 6 mois, 1 an et 2 ans avec un statut coloré par fenêtre ; ligne dédiée sous la bannière du tableau de bord (couleur + phrase, lissée sur les 3 derniers mois complets) ; suggestion de réajustement du taux au bout de 6 mois d'écart durable, jamais appliquée sans confirmation.
 - **Données de démonstration** (bouton sur un tableau de bord vide) : 4 comptes dont un PEE (avec une tranche « retraite »), 5 banques, 3 postes, 2 objectifs, 2 retraits rattachés, 5 prêts (3 immobiliers, un éco-PTZ à 0 % et un prêt conso, chacun avec un remboursement anticipé prévu), 1 bien loué rattaché à un prêt, un seuil de sécurité.
 - **Stockage local** (`localStorage`) et **synchronisation Google Drive** avec détection de conflit (voir §6).
 - **Déploiement GitHub Pages** (`.github/workflows/deploy.yml`) : build + tests puis publication automatique sur push vers `main` ; identifiants Google fournis via des variables de dépôt GitHub (Settings → Secrets and variables → Actions → Variables), pas des secrets, car ils finissent dans le JavaScript public.
@@ -35,7 +36,7 @@ Application web monopage (SPA) autonome, orientée mobile-first et desktop, pour
 - Bundle JS ~600 Ko (~190 Ko gzip) : pas de découpage de code.
 - Les prêts ne modifient ni les soldes ni les projections d'épargne (ils sont un module à part) : un remboursement anticipé n'est **pas** déduit des comptes, il faut saisir le retrait correspondant (et il n'est pas compté dans les mensualités de « Où passe l'argent »). Un bien immobilier n'a pas de valeur suivie en dehors du coussin de sécurité (pas de « patrimoine net des crédits », qui resterait trompeur sans une estimation fiable de tous les biens). Idée possible : taux variable.
 
-**Simplifications assumées :** les intérêts d'un compte sont comptés comme disponibles même sur des fonds bloqués ; les projections supposent qu'aucune dépense n'est prélevée et ignorent l'inflation ; l'épargne projetée repose sur la moyenne constatée ; les dépenses rattachées à un poste ne sont comptées que sur l'année civile en cours (l'enveloppe repart à zéro chaque 1er janvier) ; un virement entre comptes saisi comme retrait apparaît comme « retrait sans poste ».
+**Simplifications assumées :** les intérêts d'un compte sont comptés comme disponibles même sur des fonds bloqués ; les projections supposent qu'aucune dépense n'est prélevée et ignorent l'inflation ; l'épargne projetée repose sur la moyenne constatée ; les dépenses rattachées à un poste ne sont comptées que sur l'année civile en cours (l'enveloppe repart à zéro chaque 1er janvier) ; un virement entre comptes saisi comme retrait apparaît comme « retrait sans poste » ; l'effort d'épargne applique le taux cible et les revenus **actuels** rétroactivement sur tout l'historique affiché (3 mois à 2 ans), faute de suivre l'évolution des revenus dans le temps.
 
 ---
 
@@ -43,7 +44,7 @@ Application web monopage (SPA) autonome, orientée mobile-first et desktop, pour
 - **Framework :** React 19 (Hooks, Context, aucun store lourd type Redux).
 - **Langage :** TypeScript 7 (`strict: true`, interdiction absolue du type `any` — vérifiée par `grep`, il n'y a pas de linter). TS 7 n'inclut plus les `@types/*` automatiquement : `tsconfig.json` déclare `"types": ["google.accounts", "google.picker"]`.
 - **Outillage :** Vite 8 (`base: './'`, plugins `@vitejs/plugin-react` et `@tailwindcss/vite`), config Vitest dans `vite.config.ts`.
-- **Routage :** React Router 7 en `HashRouter` (routes : `/`, `/postes`, `/prets`, `/comptes`, `/mouvements` ; barre mobile à cinq onglets, « Accueil » pour le tableau de bord).
+- **Routage :** React Router 7 en `HashRouter` (routes : `/`, `/postes`, `/prets`, `/comptes`, `/mouvements`, `/effort` ; barre mobile à six onglets, « Accueil » pour le tableau de bord et « Effort » pour l'effort d'épargne).
 - **Visualisation graphique :** Chart.js 4 + `react-chartjs-2` (`maintainAspectRatio: false`, hauteur fixée par le conteneur).
 - **CSS / UI :** Tailwind CSS 4 (`@import 'tailwindcss'` dans `src/index.css`) ; classes toujours écrites en toutes lettres (pas de concaténation dynamique).
 - **Tests :** Vitest 5 + jsdom + React Testing Library + user-event + jest-dom.
@@ -56,12 +57,13 @@ Application web monopage (SPA) autonome, orientée mobile-first et desktop, pour
 ```text
 src/
 ├── domain/                  # Logique métier pure (aucune dépendance React/navigateur)
-│   ├── models/              # Account, Bank, Movement, Budget, Loan, Property, Safety, Projection, PatrimoineData, errors
+│   ├── models/              # Account, Bank, Movement, Budget, Loan, Property, SavingsEffort, Safety, Projection,
+│   │                        # PatrimoineData, errors
 │   ├── repositories/        # IAccountRepository, IMovementRepository, IBudgetRepository, ILoanRepository,
 │   │                        # IBankRepository, IPropertyRepository, ISettingsRepository
 │   └── services/            # FinancialMath, Months, Validation, ids, DemoData
 │                            # ProjectionEngine, LockEngine, SafetyEngine, BudgetEngine, LoanEngine, PropertyEngine,
-│                            # SpendingSimulator, SpendingReport
+│                            # SavingsEffortEngine, SpendingSimulator, SpendingReport
 ├── infrastructure/
 │   ├── gdrive/              # GDriveClient (GIS + Drive v3 + Picker), DriveSyncService, IDriveClient, errors, loadScript
 │   ├── storage/             # PatrimoineStore, IStorageDriver, LocalStorageDriver, MockStorageDriver,
@@ -69,13 +71,15 @@ src/
 │   └── repositories/        # Account/Movement/Budget/Loan/Bank/Property/SettingsRepository (sur PatrimoineStore)
 ├── context/                 # AuthContext (session Google), FinancialContext (composition racine)
 ├── hooks/                   # useAccounts, useMovements, useProjections, useBudgets, useLoans, useBanks, useProperties,
-│                            # useSafety, useDriveSync
+│                            # useSafety, useSavingsEffort, useDriveSync
 ├── components/
 │   ├── common/              # Button, Card, Modal, EmptyState, PageHeader, fields, format, icons, bankBadge, palette
 │   ├── layout/              # AppLayout (nav haute desktop / basse mobile), SyncStatusChip, SyncDialog
 │   ├── charts/              # ProjectionChart, AllocationChart, MonthlySavingsChart, LoansChart, chartSetup
-│   ├── accounts/, movements/, budgets/, loans/, banks/, properties/, dashboard/   # formulaires et cartes par domaine
-└── pages/                   # DashboardPage, BudgetsPage (/postes), LoansPage (/prets), AccountsPage, MovementsPage
+│   ├── accounts/, movements/, budgets/, loans/, banks/, properties/, savingsEffort/, dashboard/   # formulaires et
+│   │                        # cartes par domaine
+└── pages/                   # DashboardPage, BudgetsPage (/postes), LoansPage (/prets), AccountsPage, MovementsPage,
+                             # SavingsEffortPage (/effort)
 ```
 Les tests sont à côté du code (`*.test.ts(x)`) ; `src/test/` contient `setup.ts` et `FakeDriveClient.ts`. `App.test.tsx` est le test d'intégration de l'application.
 
@@ -84,8 +88,8 @@ Les tests sont à côté du code (`*.test.ts(x)`) ; `src/test/` contient `setup.
 ## 5. Règles Métier & Modèle de Données
 
 ### 5.1 Fichier de données (`patrimoine_data.json` et cache local)
-`PatrimoineData = { version, accounts[], movements[], budgets[], loans[], banks[], properties[], safety? }`, `DATA_VERSION = 7`.
-- **Politique de version :** tout nouveau champ qu'un ancien client ne saurait pas conserver **incrémente `DATA_VERSION`**. Les versions précédentes restent lisibles (champs absents = valeurs par défaut) ; un client plus ancien **refuse** un fichier plus récent au lieu d'en effacer silencieusement les champs. Historique : v2 fonds bloqués + épargne de sécurité, v3 postes, v4 objectifs, v5 prêts + rattachement d'un retrait à un poste, v6 remboursements anticipés d'un prêt, v7 banques + tranche « disponible à la retraite » + biens immobiliers loués.
+`PatrimoineData = { version, accounts[], movements[], budgets[], loans[], banks[], properties[], safety?, savingsEffort? }`, `DATA_VERSION = 8`.
+- **Politique de version :** tout nouveau champ qu'un ancien client ne saurait pas conserver **incrémente `DATA_VERSION`**. Les versions précédentes restent lisibles (champs absents = valeurs par défaut) ; un client plus ancien **refuse** un fichier plus récent au lieu d'en effacer silencieusement les champs. Historique : v2 fonds bloqués + épargne de sécurité, v3 postes, v4 objectifs, v5 prêts + rattachement d'un retrait à un poste, v6 remboursements anticipés d'un prêt, v7 banques + tranche « disponible à la retraite » + biens immobiliers loués, v8 effort d'épargne mensuel.
 - Toute lecture (Drive, `localStorage`) passe par `parsePatrimoineData` (validation stricte, types `unknown`). Un cache local illisible est copié sous `patrimoine_data.corrompu.<horodatage>` avant d'être écrasé.
 - Les fixtures de test utilisent la constante `DATA_VERSION`, jamais un littéral.
 
@@ -97,6 +101,7 @@ Les tests sont à côté du code (`*.test.ts(x)`) ; `src/test/` contient `setup.
 * **`Bank` :** `id`, `name` (unique, insensible à la casse). Pas de logo : un badge d'initiales à couleur déterministe (`components/common/bankBadge.tsx`) évite d'avoir à héberger des images de marques tierces. `BANK_SUGGESTIONS` (7 noms) alimente des puces d'ajout rapide, jamais écrites dans le fichier tant qu'elles ne sont pas choisies.
 * **`Property` (bien immobilier loué) :** `id`, `name`, `estimatedValue` (valeur de revente estimée, centimes > 0), `sellingFeePercent` (0 à 100, 2 décimales max), `loanId?` (prêt existant dont le capital restant dû est déduit ; un prêt ne finance qu'un seul bien). Ne suit **que** ce qui sert le coussin de sécurité : pas de valeur d'achat, pas de charges, pas d'historique.
 * **`SafetySettings` :** `threshold` (centimes), `comfortMargin` (centimes, 5 000 € par défaut). Absent tant qu'aucun seuil n'est défini.
+* **`SavingsEffortSettings` :** `incomeSources` (`{ name, monthlyAmount }[]`, centimes > 0, jamais ventilés ailleurs dans les données), `targetRatePercent` (0 à 100, 2 décimales max). Absent tant que la page `/effort` n'a pas été configurée.
 
 ### 5.3 Conventions numériques
 - Montants **en centimes entiers** partout (stockage, calculs, validation). Saisie via `parseAmountToCents` (jamais de multiplication de flottants) ; la division par 100 n'existe que pour l'affichage (`components/common/format.ts`).
@@ -115,6 +120,7 @@ Les tests sont à côté du code (`*.test.ts(x)`) ; `src/test/` contient `setup.
   - **Objectif :** évalué à la **fin du mois d'échéance** (borné à la plage projetée, indicateurs `overdue` / `beyondHorizon`) sur le reste disponible du poste ; pourcentage minimal nécessaire ; la somme des pourcentages nécessaires (chacun à son échéance) > 100 % signale des objectifs incompatibles.
 * **`LoanEngine` :** échéancier à mensualités constantes (jour du mois conservé, ramené en fin de mois si besoin) ; intérêts du mois = capital restant dû × taux / 12 (`monthlyInterest`, entiers) ; la dernière échéance solde le prêt. **Remboursement anticipé :** imputé à la première échéance dont la date est ≥ la sienne, *après* le paiement de cette échéance (les intérêts de la période portent sur l'ancien capital), plafonné au capital restant dû ; `DURATION` garde la mensualité (le prêt finit plus tôt), `PAYMENT` recalcule la mensualité (`paymentForTerm`) pour conserver le nombre d'échéances restantes ; un remboursement postérieur à la fin du prêt est sans effet et signalé (`ignoredPrepayments`). `measurePrepayments` chiffre l'écart avec le même prêt sans remboursement (intérêts et échéances économisés, mensualité réduite). Échéancier **incomplet** si la mensualité ne couvre pas les intérêts ou si la durée dépasse 50 ans : refusé à l'écriture (`validateLoan`) et à la lecture (`parseLoan`). Situation à une date (`loanSnapshot`), projection mois par mois du capital restant dû et des mensualités (`projectLoans`, assurance comprise), fins de prêt à venir, `paymentForTerm` (plus petite mensualité qui rembourse en N échéances, par dichotomie sur le même échéancier). Les mensualités ne sont **jamais** des mouvements.
 * **`PropertyEngine` :** coussin net d'un bien = valeur estimée − capital restant dû (à aujourd'hui) du prêt rattaché (0 si aucun, introuvable ou échéancier invalide) − frais de vente (% de la valeur estimée), plancher à 0. `totalPropertyCushion` somme tous les biens ; recalculé automatiquement au fil de l'amortissement du prêt. N'entre dans **aucun** autre calcul (déblocable, dépensable, niveau de sécurité) : uniquement une ligne d'info sous la bannière.
+* **`SavingsEffortEngine` :** capacité résiduelle mensuelle = revenus saisis − mensualités des prêts encore actifs (`loanSnapshot`) − moyenne mensuelle (12 mois complets) des retraits rattachés à un poste, tous postes confondus ; objectif = capacité résiduelle × taux cible. Le réalisé (`evaluateEffortWindow`) est déduit des versements nets déjà enregistrés sur les comptes d'épargne (aucune saisie récurrente) sur 4 fenêtres (`EFFORT_WINDOWS` : 3, 6, 12, 24 mois), sans jamais remonter avant le premier mouvement de l'application ; chaque fenêtre porte un niveau (`ok`/`warning`/`alert`/`critical`, mêmes seuils d'esprit que `SafetyEngine`). `suggestRecalibration` propose un nouveau taux (arrondi au multiple de 5) si la fenêtre de 6 mois s'écarte durablement (≥ 120 % ou ≤ 70 %) de l'objectif ; ne modifie jamais le réglage sans confirmation explicite. Simplification assumée : le taux cible actuel est appliqué rétroactivement sur tout l'historique affiché (les revenus passés ne sont pas suivis dans le temps).
 * **`SpendingReport` :** dépenses par poste et retraits sans poste pour une année civile, plus les mensualités de prêts de l'année d'après les échéanciers ; `spentByBudget` alimente les enveloppes.
 * **`SpendingSimulator` :** verdict `unsafe` (déblocable après dépense < seuil, ou < 0 sans seuil) > `over-budget` (dépasse ce qu'il reste au poste choisi) > `tight` (bannière jaune/orange après) > `reasonable`.
 

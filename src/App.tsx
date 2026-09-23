@@ -7,6 +7,7 @@ import { BudgetsPage } from './pages/BudgetsPage';
 import { DashboardPage } from './pages/DashboardPage';
 import { LoansPage } from './pages/LoansPage';
 import { MovementsPage } from './pages/MovementsPage';
+import { SavingsEffortPage } from './pages/SavingsEffortPage';
 
 export function App() {
   const { status, error } = useFinancial();
@@ -35,6 +36,7 @@ export function App() {
         <Route path="prets" element={<LoansPage />} />
         <Route path="comptes" element={<AccountsPage />} />
         <Route path="mouvements" element={<MovementsPage />} />
+        <Route path="effort" element={<SavingsEffortPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>
