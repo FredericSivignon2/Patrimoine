@@ -11,6 +11,7 @@ import {
   paymentForTerm,
   projectLoans,
   reservedLotsOf,
+  scheduleProgressAt,
 } from './LoanEngine';
 
 // 21 septembre 2026
@@ -254,6 +255,32 @@ describe('outstandingAt', () => {
     expect(outstandingAt(rows, 1_200_000, '2026-10-05')).toBe(1_100_000);
     expect(outstandingAt(rows, 1_200_000, '2027-01-31')).toBe(800_000);
     expect(outstandingAt(rows, 1_200_000, '2030-01-01')).toBe(0);
+  });
+});
+
+describe('scheduleProgressAt', () => {
+  const { rows } = buildAmortization(loan());
+
+  it('ne compte aucune échéance payée avant la première', () => {
+    const progress = scheduleProgressAt(rows, 1_200_000, '2026-10-04');
+    expect(progress.paid).toBe(0);
+    expect(progress.upcoming).toHaveLength(12);
+    expect(progress.outstanding).toBe(1_200_000);
+  });
+
+  it('considère une échéance payée dès son jour, sans rien à saisir', () => {
+    const progress = scheduleProgressAt(rows, 1_200_000, '2026-10-05');
+    expect(progress.paid).toBe(1);
+    expect(progress.upcoming[0].date).toBe('2026-11-05');
+    expect(progress.outstanding).toBe(1_100_000);
+  });
+
+  it('avance chaque mois avec le temps, jusqu’au prêt soldé', () => {
+    expect(scheduleProgressAt(rows, 1_200_000, '2027-01-31')).toMatchObject({ paid: 4, outstanding: 800_000 });
+    const done = scheduleProgressAt(rows, 1_200_000, '2030-01-01');
+    expect(done.paid).toBe(12);
+    expect(done.upcoming).toEqual([]);
+    expect(done.outstanding).toBe(0);
   });
 });
 

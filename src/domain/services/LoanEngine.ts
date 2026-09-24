@@ -135,6 +135,20 @@ export function outstandingAt(rows: readonly AmortizationRow[], principal: Cents
   return outstanding;
 }
 
+export interface ScheduleProgress {
+  /** Échéances dont la date est passée ou égale à `asOf` : considérées payées. */
+  paid: number;
+  upcoming: AmortizationRow[];
+  /** Capital restant dû à `asOf`. */
+  outstanding: Cents;
+}
+
+/** Où en est un échéancier à la date `asOf` : les échéances passées sont payées, sans rien à saisir. */
+export function scheduleProgressAt(rows: readonly AmortizationRow[], principal: Cents, asOf: string): ScheduleProgress {
+  const paid = rows.filter((row) => row.date <= asOf).length;
+  return { paid, upcoming: rows.slice(paid), outstanding: outstandingAt(rows, principal, asOf) };
+}
+
 /** Dernière mensualité « pleine » d'un échéancier (la toute dernière échéance peut être plus petite). */
 export function finalRegularPayment(rows: readonly AmortizationRow[]): Cents {
   if (rows.length === 0) return 0;
@@ -207,9 +221,7 @@ export function loanSnapshot(loan: Loan, today: string): LoanSnapshot | null {
   const { rows, complete, ignoredPrepayments } = amortization;
   if (!complete || rows.length === 0) return null;
 
-  const paymentsMade = rows.filter((row) => row.date <= today).length;
-  const upcoming = rows.slice(paymentsMade);
-  const outstanding = outstandingAt(rows, loan.principal, today);
+  const { paid: paymentsMade, upcoming, outstanding } = scheduleProgressAt(rows, loan.principal, today);
   const nextRow = upcoming[0];
   const remainingInterest = sumCents(upcoming.map((row) => row.interest));
 

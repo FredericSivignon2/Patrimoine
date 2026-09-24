@@ -877,6 +877,47 @@ describe('Prêts', () => {
     expect(screen.getByText('Aucun prêt pour l’instant')).toBeInTheDocument();
   });
 
+  describe('ce qu’il reste à payer aujourd’hui', () => {
+    const openLoanForm = async (loan: Loan) => {
+      const app = await renderApp('/prets', withLoans([loan]));
+      await app.user.click(screen.getByRole('button', { name: new RegExp(loan.name, 'i') }));
+      return within(await screen.findByRole('dialog', { name: /modifier le prêt/i }));
+    };
+
+    it('déduit les échéances passées sans toucher au capital saisi', async () => {
+      // échéances le 1er : les trois dernières (il y a deux mois, le mois dernier, ce mois-ci) sont passées
+      const dialog = await openLoanForm({ ...ECO_PTZ, firstPaymentDate: `${addMonths(currentMonth(), -2)}-01` });
+
+      expect(dialog.getByLabelText(/capital restant dû/i)).toHaveValue('12000,00');
+      expect(dialog.getByText(euros('Aujourd’hui : 9 000,00 € restant dû'))).toBeInTheDocument();
+      expect(dialog.getByText(/après 3 échéances payées depuis le/i)).toHaveTextContent(/inutile de modifier le montant/i);
+
+      const status = dialog.getByRole('status');
+      expect(status).toHaveTextContent(/9 échéances restantes sur 12, fin en/i);
+      expect(status).toHaveTextContent(euros('Reste à payer \\(assurance et remboursements anticipés compris\\) : 9 000,00 €'));
+    });
+
+    it('n’affiche rien de plus pour un prêt qui n’a pas commencé', async () => {
+      const dialog = await openLoanForm(ECO_PTZ);
+      expect(dialog.queryByText(/aujourd’hui :/i)).not.toBeInTheDocument();
+      expect(dialog.getByRole('status')).toHaveTextContent(/12 échéances, fin en/i);
+    });
+
+    it('indique un prêt soldé', async () => {
+      const dialog = await openLoanForm({
+        id: 'old',
+        name: 'Ancien prêt',
+        kind: 'CONSUMER',
+        principal: 100_000,
+        annualRate: 0,
+        monthlyPayment: 50_000,
+        firstPaymentDate: '2020-01-05',
+      });
+      expect(dialog.getByText('Aujourd’hui : prêt soldé')).toBeInTheDocument();
+      expect(dialog.getByRole('status')).toHaveTextContent(/prêt soldé : toutes ses échéances sont passées/i);
+    });
+  });
+
   it('résume les prêts sur le tableau de bord', async () => {
     await renderApp('/', withLoans([ECO_PTZ, IMMO]));
 

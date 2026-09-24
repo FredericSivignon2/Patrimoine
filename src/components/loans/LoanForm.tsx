@@ -15,13 +15,20 @@ import {
 import type { Account } from '../../domain/models/Account';
 import type { Bank } from '../../domain/models/Bank';
 import { centsToInputString, parseAmountToCents, parsePercent, sumCents } from '../../domain/services/FinancialMath';
-import { buildAmortization, measurePrepayments, paymentForTerm, type Amortization } from '../../domain/services/LoanEngine';
+import {
+  buildAmortization,
+  measurePrepayments,
+  paymentForTerm,
+  scheduleProgressAt,
+  type Amortization,
+  type AmortizationRow,
+} from '../../domain/services/LoanEngine';
 import { addMonthsToDate, isValidIsoDate, monthKeyOfIso, toIsoDate } from '../../domain/services/Months';
 import { BankSelect } from '../banks/BankSelect';
 import { Button } from '../common/Button';
 import { errorMessage } from '../common/errorMessage';
 import { DeleteButton, Field, FormError, SuffixInput, inputClass } from '../common/fields';
-import { formatCount, formatEuros, formatMonth } from '../common/format';
+import { formatCount, formatEuros, formatFullDate, formatMonth } from '../common/format';
 import { PlusIcon, XIcon } from '../common/icons';
 
 interface PrepaymentRow {
@@ -88,6 +95,9 @@ const isEffect = (value: string): value is PrepaymentEffect => PREPAYMENT_EFFECT
 
 const endMonth = (schedule: Amortization): string => formatMonth(monthKeyOfIso(schedule.rows[schedule.rows.length - 1].date));
 const totalInterest = (schedule: Amortization): number => sumCents(schedule.rows.map((row) => row.interest));
+/** Ce que coûtent ces échéances : mensualités, remboursements anticipés et assurance. */
+const costOf = (rows: readonly AmortizationRow[], insurance: number): number =>
+  sumCents(rows.map((row) => row.payment + row.prepayment + insurance));
 
 interface LoanFormProps {
   loan?: Loan;
@@ -138,6 +148,9 @@ export function LoanForm({ loan, banks, accounts, onSubmit, onDelete, onCancel }
   // Le même prêt sans remboursement anticipé, pour mesurer ce qu'ils changent.
   const baseline = terms && prepayments.length > 0 && prepaymentsError === null ? buildAmortization(terms) : undefined;
   const impact = schedule && baseline && measurePrepayments(schedule, baseline, '');
+  // Les échéances passées sont payées : le capital saisi reste le point de départ, jamais à mettre à jour.
+  const progress = terms && schedule?.complete ? scheduleProgressAt(schedule.rows, terms.principal, toIsoDate(new Date())) : undefined;
+  const started = progress !== undefined && progress.paid > 0;
 
   const run = async (action: () => Promise<unknown>): Promise<void> => {
     setBusy(true);
@@ -250,12 +263,26 @@ export function LoanForm({ loan, banks, accounts, onSubmit, onDelete, onCancel }
       </Field>
       <BankSelect banks={banks} value={bankId} onChange={setBankId} label="Banque prêteuse (optionnel)" />
 
-      <Field
-        label="Capital restant dû"
-        hint="Avant la prochaine échéance, d’après votre dernier relevé. Pour un prêt qui n’a pas encore commencé (différé), le montant emprunté."
-      >
-        <SuffixInput suffix="€" value={principalText} onChange={(event) => setPrincipalText(event.target.value)} placeholder="95 000" />
-      </Field>
+      <div>
+        <Field
+          label="Capital restant dû"
+          hint="Avant la prochaine échéance, d’après votre dernier relevé. Pour un prêt qui n’a pas encore commencé (différé), le montant emprunté."
+        >
+          <SuffixInput suffix="€" value={principalText} onChange={(event) => setPrincipalText(event.target.value)} placeholder="95 000" />
+        </Field>
+        {started && progress && (
+          <p className="mt-2 rounded-xl bg-teal-50 px-3 py-2 text-sm text-teal-900 ring-1 ring-teal-200">
+            <span className="font-semibold">
+              {progress.upcoming.length > 0
+                ? `Aujourd’hui : ${formatEuros(progress.outstanding)} restant dû`
+                : 'Aujourd’hui : prêt soldé'}
+            </span>
+            , après {formatCount(progress.paid, 'échéance payée', 'échéances payées')} depuis le{' '}
+            {formatFullDate(firstPaymentDate)}. Inutile de modifier le montant ci-dessus chaque mois : les échéances
+            passées sont déduites automatiquement.
+          </p>
+        )}
+      </div>
       <Field
         label="Prochaine échéance"
         hint="Date de la prochaine mensualité. Si elle est passée, les échéances écoulées sont considérées comme payées."
@@ -456,14 +483,33 @@ export function LoanForm({ loan, banks, accounts, onSubmit, onDelete, onCancel }
         <div role="status" className="space-y-1 rounded-xl bg-slate-50 px-3 py-2 text-sm text-slate-700 ring-1 ring-slate-200">
           {schedule.complete ? (
             <>
-              <p className="font-medium text-slate-900">
-                {formatCount(schedule.rows.length, 'échéance')}, fin en {endMonth(schedule)}.
-              </p>
-              <p>
-                Intérêts : {formatEuros(totalInterest(schedule))} · coût total restant (assurance et remboursements
-                anticipés compris) :{' '}
-                {formatEuros(sumCents(schedule.rows.map((row) => row.payment + row.prepayment + (insurance ?? 0))))}.
-              </p>
+              {started && progress ? (
+                progress.upcoming.length > 0 ? (
+                  <>
+                    <p className="font-medium text-slate-900">
+                      {formatCount(progress.upcoming.length, 'échéance restante', 'échéances restantes')} sur{' '}
+                      {schedule.rows.length}, fin en {endMonth(schedule)}.
+                    </p>
+                    <p>
+                      Reste à payer (assurance et remboursements anticipés compris) :{' '}
+                      {formatEuros(costOf(progress.upcoming, insurance ?? 0))}, dont{' '}
+                      {formatEuros(sumCents(progress.upcoming.map((row) => row.interest)))} d’intérêts.
+                    </p>
+                  </>
+                ) : (
+                  <p className="font-medium text-slate-900">Prêt soldé : toutes ses échéances sont passées.</p>
+                )
+              ) : (
+                <>
+                  <p className="font-medium text-slate-900">
+                    {formatCount(schedule.rows.length, 'échéance')}, fin en {endMonth(schedule)}.
+                  </p>
+                  <p>
+                    Intérêts : {formatEuros(totalInterest(schedule))} · coût total restant (assurance et remboursements
+                    anticipés compris) : {formatEuros(costOf(schedule.rows, insurance ?? 0))}.
+                  </p>
+                </>
+              )}
               {baseline && impact && (
                 <>
                   <p>
